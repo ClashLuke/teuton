@@ -1,26 +1,9 @@
-# Multi-miner stack for hosts with many GPUs that we want to repurpose as
-# several independent Teuton miners (1 container = 1 GPU = 1 hotkey).
+# Multi-miner stack for 4 active hotkeys on an 8-GPU host.
 #
-# Used on the spare 8x B200 (gentle-eagle-5c) to host miners 8/9/10. Add
-# more `minerN` services if you want to fill the rest of the GPUs.
-#
-# Required env on the remote (via /root/teuton/.env):
-#   DOCKER_USER, S3_BUCKET, S3_REGION,
-#   TEUTON_NETUID (default 3),
-#   TEUTON_OWNER_HOTKEY, MINER_HK_SS58_0..2, MINER_HK_NAME_0..2
-#   (per-GPU hotkey + on-disk name)
-#
-# Optional env:
-#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  (operator/internal deployments
-#       only; third-party miners normally use anonymous bucket access plus
-#       encrypted presigned grants)
-#   TEUTON_AUDIT_ELIGIBLE_HOTKEYS  (CSV of SS58s; each miner whose hotkey
-#       appears in this list also picks up audit_replay jobs assigned to
-#       it from the bucket, in addition to its normal training work)
-#
-# RUN_ID is optional: when unset, the image's baked TEUTON_BAKED_RUN_ID
-# (set at `docker build --build-arg TEUTON_RUN_ID=...`) is used. Set RUN_ID
-# in /root/teuton/.env only when you need a per-host override.
+# This is intentionally separate from compose.multi-miner.yml, which defines
+# gpu0..gpu7 and is used by the former auditor host. gentle-eagle-5c currently
+# has only four assigned miner hotkeys, so this file avoids launching empty
+# gpu4..gpu7 services.
 name: teuton-miners
 
 x-miner-common: &miner-common
@@ -44,8 +27,6 @@ x-miner-env: &miner-env
   TEUTON_OWNER_HOTKEY: ${TEUTON_OWNER_HOTKEY:-}
   TEUTON_ASSIGNMENT_CRYPTO: ${TEUTON_ASSIGNMENT_CRYPTO:-ed25519}
   TEUTON_AUDIT_ELIGIBLE_HOTKEYS: ${TEUTON_AUDIT_ELIGIBLE_HOTKEYS:-}
-  # Optional runtime run-id override. Empty/unset falls back to the
-  # image-baked TEUTON_BAKED_RUN_ID (resolved in entrypoint.sh).
   TEUTON_RUN_ID: ${TEUTON_RUN_ID:-${RUN_ID:-}}
   BT_WALLET_PATH: /root/.bittensor/wallets
   BT_WALLET_NAME: ${MINER_WALLET_NAME:-teuton_mining}
@@ -142,98 +123,6 @@ services:
       - --s3-region=${S3_REGION:-us-east-1}
       - --audit-eligible-hotkeys=${TEUTON_AUDIT_ELIGIBLE_HOTKEYS:-}
     deploy: { resources: { reservations: { devices: [{ driver: nvidia, device_ids: ["3"], capabilities: [gpu] }] } } }
-
-  miner-gpu4:
-    <<: *miner-common
-    container_name: teuton-miner-gpu4
-    environment:
-      <<: *miner-env
-      NVIDIA_VISIBLE_DEVICES: "4"
-      BT_HOTKEY_NAME: ${MINER_HK_NAME_4}
-    command:
-      - --netuid=${TEUTON_NETUID:-3}
-      - --hotkey=${MINER_HK_SS58_4}
-      - --devices=cuda:0
-      - --wallet-path=/root/.bittensor/wallets
-      - --wallet-name=${MINER_WALLET_NAME:-teuton_mining}
-      - --hotkey-name=${MINER_HK_NAME_4}
-      - --grant-mode=presigned
-      - --assignment-crypto=ed25519
-      - --discovery-backend=bucket
-      - --poll-interval=0.5
-      - --s3-bucket=${S3_BUCKET}
-      - --s3-region=${S3_REGION:-us-east-1}
-      - --audit-eligible-hotkeys=${TEUTON_AUDIT_ELIGIBLE_HOTKEYS:-}
-    deploy: { resources: { reservations: { devices: [{ driver: nvidia, device_ids: ["4"], capabilities: [gpu] }] } } }
-
-  miner-gpu5:
-    <<: *miner-common
-    container_name: teuton-miner-gpu5
-    environment:
-      <<: *miner-env
-      NVIDIA_VISIBLE_DEVICES: "5"
-      BT_HOTKEY_NAME: ${MINER_HK_NAME_5}
-    command:
-      - --netuid=${TEUTON_NETUID:-3}
-      - --hotkey=${MINER_HK_SS58_5}
-      - --devices=cuda:0
-      - --wallet-path=/root/.bittensor/wallets
-      - --wallet-name=${MINER_WALLET_NAME:-teuton_mining}
-      - --hotkey-name=${MINER_HK_NAME_5}
-      - --grant-mode=presigned
-      - --assignment-crypto=ed25519
-      - --discovery-backend=bucket
-      - --poll-interval=0.5
-      - --s3-bucket=${S3_BUCKET}
-      - --s3-region=${S3_REGION:-us-east-1}
-      - --audit-eligible-hotkeys=${TEUTON_AUDIT_ELIGIBLE_HOTKEYS:-}
-    deploy: { resources: { reservations: { devices: [{ driver: nvidia, device_ids: ["5"], capabilities: [gpu] }] } } }
-
-  miner-gpu6:
-    <<: *miner-common
-    container_name: teuton-miner-gpu6
-    environment:
-      <<: *miner-env
-      NVIDIA_VISIBLE_DEVICES: "6"
-      BT_HOTKEY_NAME: ${MINER_HK_NAME_6}
-    command:
-      - --netuid=${TEUTON_NETUID:-3}
-      - --hotkey=${MINER_HK_SS58_6}
-      - --devices=cuda:0
-      - --wallet-path=/root/.bittensor/wallets
-      - --wallet-name=${MINER_WALLET_NAME:-teuton_mining}
-      - --hotkey-name=${MINER_HK_NAME_6}
-      - --grant-mode=presigned
-      - --assignment-crypto=ed25519
-      - --discovery-backend=bucket
-      - --poll-interval=0.5
-      - --s3-bucket=${S3_BUCKET}
-      - --s3-region=${S3_REGION:-us-east-1}
-      - --audit-eligible-hotkeys=${TEUTON_AUDIT_ELIGIBLE_HOTKEYS:-}
-    deploy: { resources: { reservations: { devices: [{ driver: nvidia, device_ids: ["6"], capabilities: [gpu] }] } } }
-
-  miner-gpu7:
-    <<: *miner-common
-    container_name: teuton-miner-gpu7
-    environment:
-      <<: *miner-env
-      NVIDIA_VISIBLE_DEVICES: "7"
-      BT_HOTKEY_NAME: ${MINER_HK_NAME_7}
-    command:
-      - --netuid=${TEUTON_NETUID:-3}
-      - --hotkey=${MINER_HK_SS58_7}
-      - --devices=cuda:0
-      - --wallet-path=/root/.bittensor/wallets
-      - --wallet-name=${MINER_WALLET_NAME:-teuton_mining}
-      - --hotkey-name=${MINER_HK_NAME_7}
-      - --grant-mode=presigned
-      - --assignment-crypto=ed25519
-      - --discovery-backend=bucket
-      - --poll-interval=0.5
-      - --s3-bucket=${S3_BUCKET}
-      - --s3-region=${S3_REGION:-us-east-1}
-      - --audit-eligible-hotkeys=${TEUTON_AUDIT_ELIGIBLE_HOTKEYS:-}
-    deploy: { resources: { reservations: { devices: [{ driver: nvidia, device_ids: ["7"], capabilities: [gpu] }] } } }
 
   watchtower:
     image: containrrr/watchtower:latest

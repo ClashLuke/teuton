@@ -9,7 +9,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from .signatures import digest_dict, sign_dict
+from .signatures import canonical_json, digest_dict, sign_dict
+
+
+def _record_signature(value: dict[str, Any], signer_or_secret: Any) -> str:
+    sign = getattr(signer_or_secret, "sign", None)
+    if callable(sign):
+        return str(sign(canonical_json(value)))
+    return sign_dict(value, str(signer_or_secret))
 
 
 class CryptoMode(str, Enum):
@@ -612,8 +619,8 @@ class JobManifestV3:
     def manifest_hash(self) -> str:
         return digest_dict(self.unsigned_dict())
 
-    def sign(self, secret: str) -> "JobManifestV3":
-        self.owner_signature = sign_dict(self.unsigned_dict(), secret)
+    def sign(self, signer_or_secret: Any) -> "JobManifestV3":
+        self.owner_signature = _record_signature(self.unsigned_dict(), signer_or_secret)
         return self
 
     def to_dict(self) -> dict[str, Any]:
@@ -687,8 +694,8 @@ class JobReceiptV3:
             out["execution"] = dict(self.execution)
         return out
 
-    def sign(self, secret: str) -> "JobReceiptV3":
-        self.miner_signature = sign_dict(self.unsigned_dict(), secret)
+    def sign(self, signer_or_secret: Any) -> "JobReceiptV3":
+        self.miner_signature = _record_signature(self.unsigned_dict(), signer_or_secret)
         return self
 
     def to_dict(self) -> dict[str, Any]:
@@ -755,8 +762,8 @@ class VerificationVerdictV3:
             "comparison": dict(self.comparison),
         }
 
-    def sign(self, secret: str) -> "VerificationVerdictV3":
-        self.validator_signature = sign_dict(self.unsigned_dict(), secret)
+    def sign(self, signer_or_secret: Any) -> "VerificationVerdictV3":
+        self.validator_signature = _record_signature(self.unsigned_dict(), signer_or_secret)
         return self
 
     def to_dict(self) -> dict[str, Any]:
@@ -819,8 +826,8 @@ class AuditResultV3:
             "comparison": dict(self.comparison),
         }
 
-    def sign(self, secret: str) -> "AuditResultV3":
-        self.auditor_signature = sign_dict(self.unsigned_dict(), secret)
+    def sign(self, signer_or_secret: Any) -> "AuditResultV3":
+        self.auditor_signature = _record_signature(self.unsigned_dict(), signer_or_secret)
         return self
 
     def to_dict(self) -> dict[str, Any]:

@@ -9,6 +9,7 @@ import time
 import os
 
 from teuton_core.protocol import ArtifactCryptoPolicy, CryptoMode
+from teuton_core.signatures import NativeEd25519HotkeySigner
 from teuton_miner.neuron import MinerNeuron, MinerNeuronConfig
 from teuton_orchestrator.run_manager import RunConfig, RunManager
 from teuton_orchestrator.streaming import StreamingRunConfig, StreamingRunManager
@@ -59,6 +60,30 @@ def parse_audit_eligible_hotkeys(args) -> list[str]:
     """
     raw = getattr(args, "audit_eligible_hotkeys", "") or ""
     return [s.strip() for s in raw.split(",") if s.strip()]
+
+
+def load_hotkey_signer(args) -> NativeEd25519HotkeySigner | None:
+    wallet_name = getattr(args, "wallet_name", None)
+    hotkey_name = getattr(args, "hotkey_name", None)
+    wallet_path = getattr(args, "wallet_path", None) or os.environ.get("BT_WALLET_PATH", "~/.bittensor/wallets")
+    if not wallet_name or not hotkey_name:
+        return None
+    return NativeEd25519HotkeySigner.from_wallet(
+        wallet_path=wallet_path,
+        wallet_name=wallet_name,
+        hotkey_name=hotkey_name,
+    )
+
+
+def resolve_hotkey_arg(args, *, attr: str = "hotkey") -> str:
+    value = (getattr(args, attr, "") or "").strip()
+    if value:
+        return value
+    signer = load_hotkey_signer(args)
+    if signer is None:
+        raise SystemExit(f"error: --{attr.replace('_', '-')} is required unless wallet-name and hotkey-name are set")
+    setattr(args, attr, signer.identity)
+    return signer.identity
 
 
 def require_run_id(args: argparse.Namespace) -> str:
@@ -152,6 +177,7 @@ def cmd_local_smoke(args: argparse.Namespace) -> int:
 def cmd_orchestrator(args: argparse.Namespace) -> int:
     require_run_id(args)
     bucket = build_bucket(args)
+    owner_signer = load_hotkey_signer(args)
     if args.task in {"gpt_pipe"}:
         manager = StreamingRunManager(
             bucket=bucket,
@@ -161,6 +187,7 @@ def cmd_orchestrator(args: argparse.Namespace) -> int:
                 task=args.task,
                 max_epochs=args.steps,
                 owner_secret=args.owner_secret,
+                owner_signer=owner_signer,
                 crypto_policy=build_crypto_policy(args),
                 grant_mode=args.grant_mode,
                 grant_ttl_sec=args.grant_ttl_sec,
@@ -181,6 +208,7 @@ def cmd_orchestrator(args: argparse.Namespace) -> int:
             task=args.task,
             max_steps=args.steps,
             owner_secret=args.owner_secret,
+            owner_signer=owner_signer,
             crypto_policy=build_crypto_policy(args),
             grant_mode=args.grant_mode,
             grant_ttl_sec=args.grant_ttl_sec,
@@ -197,6 +225,7 @@ def cmd_orchestrator(args: argparse.Namespace) -> int:
 
 def cmd_miner(args: argparse.Namespace) -> int:
     require_run_id(args)
+    resolve_hotkey_arg(args)
     bucket = build_bucket(args)
     devices = args.devices.split(",") if args.devices else ["cpu"]
     device_group = args.device_group.split(",") if args.device_group else None
@@ -222,6 +251,7 @@ def cmd_miner(args: argparse.Namespace) -> int:
             discovery_backend=args.discovery_backend,
             audit_eligible_hotkeys=parse_audit_eligible_hotkeys(args),
             owner_secret=args.owner_secret,
+            owner_hotkey=args.owner_hotkey,
         ),
     )
     try:
@@ -233,6 +263,8 @@ def cmd_miner(args: argparse.Namespace) -> int:
 
 def cmd_validator(args: argparse.Namespace) -> int:
     require_run_id(args)
+    if not args.validator_hotkey:
+        resolve_hotkey_arg(args, attr="validator_hotkey")
     bucket = build_bucket(args)
     validator = ValidatorNeuron(
         bucket=bucket,
@@ -243,6 +275,7 @@ def cmd_validator(args: argparse.Namespace) -> int:
             device=args.device,
             sample_rate=args.sample_rate,
             dry_run_weights=not args.set_weights,
+            wallet_path=args.wallet_path,
             wallet_name=args.wallet_name,
             hotkey_name=args.hotkey_name,
             network=args.network,
@@ -261,6 +294,9 @@ def cmd_validator(args: argparse.Namespace) -> int:
 
 def cmd_audit_jobs(args: argparse.Namespace) -> int:
     require_run_id(args)
+    owner_signer = load_hotkey_signer(args)
+    if not args.validator_hotkey and owner_signer is not None:
+        args.validator_hotkey = owner_signer.identity
     bucket = build_bucket(args)
     manager = AuditJobManager(
         bucket=bucket,
@@ -269,6 +305,7 @@ def cmd_audit_jobs(args: argparse.Namespace) -> int:
             run_id=args.run_id,
             validator_hotkey=args.validator_hotkey,
             owner_secret=args.owner_secret,
+            owner_signer=owner_signer,
             assignment_secret=args.assignment_secret,
             assignment_crypto=args.assignment_crypto,
             network=args.network,
@@ -300,6 +337,7 @@ def cmd_ledger(args: argparse.Namespace) -> int:
         run_id=args.run_id,
         window_id=args.window_id,
         validator_secret=args.validator_secret,
+        validator_hotkey=args.validator_hotkey,
     )
     print(json.dumps(summary.to_dict(), indent=2, sort_keys=True))
     return 0
@@ -325,6 +363,31 @@ def cmd_discovery_ui(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dashboard_backend(args: argparse.Namespace) -> int:
+    from teuton_core.dashboard_backend import DashboardConfig, serve_dashboard_backend
+
+    bucket = build_bucket(args)
+    serve_dashboard_backend(
+        bucket=bucket,
+        config=DashboardConfig(
+            netuid=args.netuid,
+            run_id=args.run_id or None,
+            db_path=args.db_path,
+            host=args.host,
+            port=args.port,
+            refresh_sec=args.refresh_sec,
+            heartbeat_ttl_sec=discovery_heartbeat_ttl(args),
+            max_jobs=args.max_jobs,
+            max_artifacts=args.max_artifacts,
+            bucket_poll_sec=args.bucket_poll_sec,
+            chain_poll_sec=args.chain_poll_sec,
+            network=args.network,
+            open_browser=args.open_browser,
+        ),
+    )
+    return 0
+
+
 def add_bucket_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--local-root", default="/tmp/teuton-v3")
     p.add_argument("--bucket", default="teuton-v3")
@@ -345,7 +408,7 @@ def add_crypto_args(p: argparse.ArgumentParser) -> None:
 def add_grant_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--grant-mode", choices=["direct", "local", "presigned"], default="direct")
     p.add_argument("--grant-ttl-sec", type=int, default=600)
-    p.add_argument("--assignment-secret", default=os.environ.get("TEUTON_ASSIGNMENT_SECRET", "teuton-dev-assignment"))
+    p.add_argument("--assignment-secret", default="teuton-dev-assignment")
     p.add_argument("--assignment-crypto", choices=["dev", "ed25519"], default=os.environ.get("TEUTON_ASSIGNMENT_CRYPTO", "dev"))
 
 
@@ -377,6 +440,12 @@ def add_audit_eligible_args(p: argparse.ArgumentParser) -> None:
     )
 
 
+def add_wallet_args(p: argparse.ArgumentParser, *, default_wallet: str | None = "") -> None:
+    p.add_argument("--wallet-path", default=os.environ.get("BT_WALLET_PATH", "~/.bittensor/wallets"))
+    p.add_argument("--wallet-name", default=os.environ.get("BT_WALLET_NAME", default_wallet or ""))
+    p.add_argument("--hotkey-name", default=os.environ.get("BT_HOTKEY_NAME", ""))
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="teuton-v3")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -395,9 +464,9 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--sample-rate", type=float, default=1.0)
     smoke.add_argument("--timeout-sec", type=float, default=60.0)
     smoke.add_argument("--network", default="finney")
-    smoke.add_argument("--owner-secret", default=os.environ.get("TEUTON_OWNER_SECRET", "owner-dev-secret"))
-    smoke.add_argument("--miner-secret", default=os.environ.get("TEUTON_MINER_SECRET", "miner-dev-secret"))
-    smoke.add_argument("--validator-secret", default=os.environ.get("TEUTON_VALIDATOR_SECRET", "validator-dev-secret"))
+    smoke.add_argument("--owner-secret", default="owner-dev-secret")
+    smoke.add_argument("--miner-secret", default="miner-dev-secret")
+    smoke.add_argument("--validator-secret", default="validator-dev-secret")
     smoke.add_argument("--encryption-secret", default=os.environ.get("TEUTON_ENCRYPTION_SECRET", "teuton-dev-encryption"))
     add_crypto_args(smoke)
     add_grant_args(smoke)
@@ -417,7 +486,8 @@ def build_parser() -> argparse.ArgumentParser:
     orch.add_argument("--poll-interval", type=float, default=0.1)
     orch.add_argument("--timeout-sec", type=float, default=600.0)
     orch.add_argument("--network", default="finney")
-    orch.add_argument("--owner-secret", default=os.environ.get("TEUTON_OWNER_SECRET", "owner-dev-secret"))
+    orch.add_argument("--owner-secret", default="owner-dev-secret")
+    add_wallet_args(orch)
     add_crypto_args(orch)
     add_grant_args(orch)
     add_discovery_args(orch)
@@ -431,18 +501,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("TEUTON_RUN_ID", ""),
         help="Defaults to $TEUTON_RUN_ID (set by entrypoint from compose override or image-baked value).",
     )
-    miner.add_argument("--hotkey", required=True)
+    miner.add_argument("--hotkey", default=os.environ.get("MINER_HOTKEY_SS58", ""))
     miner.add_argument("--devices", default="cpu")
     miner.add_argument("--device-group", default="", help="Comma-separated GPUs that should execute as one multi-GPU worker group.")
     miner.add_argument("--poll-interval", type=float, default=0.1)
     miner.add_argument("--fault-mode", default="")
     miner.add_argument("--fault-rate", type=float, default=1.0)
-    miner.add_argument("--miner-secret", default=os.environ.get("TEUTON_MINER_SECRET", "miner-dev-secret"))
-    miner.add_argument("--owner-secret", default=os.environ.get("TEUTON_OWNER_SECRET", "owner-dev-secret"))
+    miner.add_argument("--miner-secret", default="miner-dev-secret")
+    miner.add_argument("--owner-secret", default="owner-dev-secret")
     miner.add_argument("--encryption-secret", default=os.environ.get("TEUTON_ENCRYPTION_SECRET", "teuton-dev-encryption"))
-    miner.add_argument("--wallet-path", default=os.environ.get("BT_WALLET_PATH", "~/.bittensor/wallets"))
-    miner.add_argument("--wallet-name", default=os.environ.get("BT_WALLET_NAME", ""))
-    miner.add_argument("--hotkey-name", default=os.environ.get("BT_HOTKEY_NAME", ""))
+    add_wallet_args(miner)
+    miner.add_argument("--owner-hotkey", default=os.environ.get("TEUTON_OWNER_HOTKEY", ""))
     add_grant_args(miner)
     add_discovery_args(miner)
     add_audit_eligible_args(miner)
@@ -456,18 +525,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("TEUTON_RUN_ID", ""),
         help="Defaults to $TEUTON_RUN_ID (set by entrypoint from compose override or image-baked value).",
     )
-    val.add_argument("--validator-hotkey", default="validator0")
+    val.add_argument("--validator-hotkey", default=os.environ.get("VALIDATOR_HOTKEY_SS58", ""))
     val.add_argument("--device", default="cpu")
     val.add_argument("--sample-rate", type=float, default=1.0)
     val.add_argument("--max-receipts", type=int, default=None)
     val.add_argument("--publish-weights", action="store_true")
     val.add_argument("--set-weights", action="store_true")
-    val.add_argument("--wallet-name", default=None)
-    val.add_argument("--hotkey-name", default=None)
+    add_wallet_args(val, default_wallet=None)
     val.add_argument("--network", default=None)
-    val.add_argument("--owner-secret", default=os.environ.get("TEUTON_OWNER_SECRET", "owner-dev-secret"))
-    val.add_argument("--miner-secret", default=os.environ.get("TEUTON_MINER_SECRET", "miner-dev-secret"))
-    val.add_argument("--validator-secret", default=os.environ.get("TEUTON_VALIDATOR_SECRET", "validator-dev-secret"))
+    val.add_argument("--owner-secret", default="owner-dev-secret")
+    val.add_argument("--miner-secret", default="miner-dev-secret")
+    val.add_argument("--validator-secret", default="validator-dev-secret")
     val.add_argument("--encryption-secret", default=os.environ.get("TEUTON_ENCRYPTION_SECRET", "teuton-dev-encryption"))
     val.add_argument("--audit-mode", choices=["local", "consume"], default="local")
     add_audit_eligible_args(val)
@@ -481,11 +549,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("TEUTON_RUN_ID", ""),
         help="Defaults to $TEUTON_RUN_ID (set by entrypoint from compose override or image-baked value).",
     )
-    audit.add_argument("--validator-hotkey", default="validator0")
+    audit.add_argument("--validator-hotkey", default=os.environ.get("VALIDATOR_HOTKEY_SS58", ""))
     audit.add_argument("--sample-rate", type=float, default=1.0)
     audit.add_argument("--max-jobs", type=int, default=None)
     audit.add_argument("--network", default="finney")
-    audit.add_argument("--owner-secret", default=os.environ.get("TEUTON_OWNER_SECRET", "owner-dev-secret"))
+    audit.add_argument("--owner-secret", default="owner-dev-secret")
+    add_wallet_args(audit, default_wallet=os.environ.get("VALIDATOR_WALLET_NAME", ""))
     add_grant_args(audit)
     add_discovery_args(audit)
     add_audit_eligible_args(audit)
@@ -502,7 +571,8 @@ def build_parser() -> argparse.ArgumentParser:
     ledger.add_argument("--netuid", type=int, default=0)
     ledger.add_argument("--run-id", required=True)
     ledger.add_argument("--window-id", default=None)
-    ledger.add_argument("--validator-secret", default=os.environ.get("TEUTON_VALIDATOR_SECRET", "validator-dev-secret"))
+    ledger.add_argument("--validator-secret", default="validator-dev-secret")
+    ledger.add_argument("--validator-hotkey", default=os.environ.get("VALIDATOR_HOTKEY_SS58", ""))
     ledger.set_defaults(fn=cmd_ledger)
 
     discovery = sub.add_parser("discovery-ui")
@@ -518,6 +588,23 @@ def build_parser() -> argparse.ArgumentParser:
     discovery.add_argument("--max-artifacts", type=int, default=300)
     add_discovery_args(discovery)
     discovery.set_defaults(fn=cmd_discovery_ui)
+
+    dashboard = sub.add_parser("dashboard-backend")
+    add_bucket_args(dashboard)
+    dashboard.add_argument("--netuid", type=int, default=0)
+    dashboard.add_argument("--run-id", default=os.environ.get("TEUTON_RUN_ID", ""), help="Optional run filter.")
+    dashboard.add_argument("--db-path", default=os.environ.get("TEUTON_DASHBOARD_DB_PATH", "/var/lib/teuton-dashboard/dashboard.sqlite3"))
+    dashboard.add_argument("--host", default="127.0.0.1")
+    dashboard.add_argument("--port", type=int, default=8765)
+    dashboard.add_argument("--open-browser", action="store_true")
+    dashboard.add_argument("--refresh-sec", type=float, default=3.0)
+    dashboard.add_argument("--max-jobs", type=int, default=500)
+    dashboard.add_argument("--max-artifacts", type=int, default=300)
+    dashboard.add_argument("--bucket-poll-sec", type=float, default=float(os.environ.get("TEUTON_DASHBOARD_BUCKET_POLL_SEC") or "5"))
+    dashboard.add_argument("--chain-poll-sec", type=float, default=float(os.environ.get("TEUTON_DASHBOARD_CHAIN_POLL_SEC") or "30"))
+    dashboard.add_argument("--network", default=os.environ.get("BT_NETWORK", "finney"))
+    add_discovery_args(dashboard)
+    dashboard.set_defaults(fn=cmd_dashboard_backend)
 
     return p
 

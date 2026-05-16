@@ -44,6 +44,9 @@ packages = [
     "scripts",
 ]
 
+[tool.setuptools.package-data]
+teuton_core = ["_assets/*.png"]
+
 [project.scripts]
 teuton-v3 = "teuton_core.cli:main"
 teuton-v2-legacy = "teuton_legacy_v2.main:main"

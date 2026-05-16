@@ -2,17 +2,20 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import random
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from teuton_core import paths
+from teuton_core.ir import Graph
 from teuton_core.protocol import AuditResultV3, JobManifestV3, JobReceiptV3, MinerScoreWindow, VerificationVerdictV3
-from teuton_core.signatures import verify_dict
+from teuton_core.signatures import Signer, verify_dict, verify_identity_dict
 from teuton_runtime.crypto import DrandTimelockProvider
 from teuton_runtime.storage import ObjectStore
 from .audit import AuditReplayConfig, AuditReplayRunner
+from .compute_units import expected_compute_units
 
 
 @dataclass
@@ -21,7 +24,9 @@ class ValidatorConfig:
     run_id: str
     validator_hotkey: str
     validator_secret: str = "validator-dev-secret"
+    validator_signer: Signer | None = None
     owner_secret: str = "owner-dev-secret"
+    owner_hotkey: str = ""
     miner_secret: str = "miner-dev-secret"
     device: str = "cpu"
     sample_rate: float = 1.0
@@ -99,13 +104,14 @@ class ReplayVerifier:
         )
 
     def verify(self, receipt_uri: str, receipt: JobReceiptV3) -> VerificationVerdictV3:
+        manifest = self.find_manifest(receipt)
         audit = AuditReplayRunner(bucket=self.bucket, config=self.audit_config()).run(
             receipt_uri=receipt_uri,
-            manifest=self.find_manifest(receipt),
+            manifest=manifest,
             receipt=receipt,
             auditor_hotkey=self.config.validator_hotkey,
         )
-        return self.verdict_from_audit(receipt, audit)
+        return self.verdict_from_audit(receipt, audit, manifest=manifest)
 
     def find_manifest(self, receipt: JobReceiptV3) -> JobManifestV3:
         uri = self.bucket.uri_for_key(paths.job_manifest_key(self.config.netuid, receipt.run_id, receipt.job_id))
@@ -114,6 +120,7 @@ class ReplayVerifier:
     def audit_config(self) -> AuditReplayConfig:
         return AuditReplayConfig(
             owner_secret=self.config.owner_secret,
+            owner_hotkey=self.config.owner_hotkey,
             miner_secret=self.config.miner_secret,
             device=self.config.device,
             max_sample_elements=self.config.max_sample_elements,
@@ -146,10 +153,17 @@ class ReplayVerifier:
         allow = self.config.audit_eligible_hotkeys
         if allow and audit.auditor_hotkey not in set(allow):
             return False
-        return verify_dict(audit.unsigned_dict(), audit.auditor_hotkey, audit.auditor_signature)
+        return verify_identity_dict(audit.unsigned_dict(), audit.auditor_hotkey, audit.auditor_signature)
 
-    def verdict_from_audit(self, receipt: JobReceiptV3, audit: AuditResultV3) -> VerificationVerdictV3:
-        estimated_cu = estimate_cu(receipt, audit.replay_compute_sec)
+    def verdict_from_audit(
+        self,
+        receipt: JobReceiptV3,
+        audit: AuditResultV3,
+        *,
+        manifest: JobManifestV3 | None = None,
+    ) -> VerificationVerdictV3:
+        manifest = manifest or self.find_manifest(receipt)
+        estimated_cu = estimate_cu(receipt, manifest=manifest, graph=self.fetch_graph(manifest))
         verdict = VerificationVerdictV3(
             verdict_id=f"{self.config.validator_hotkey}:{receipt.receipt_id}",
             receipt_id=receipt.receipt_id,
@@ -165,7 +179,7 @@ class ReplayVerifier:
             checked_unix=time.time(),
             comparison={"audit": audit.to_dict()},
         )
-        return verdict.sign(self.config.validator_secret)
+        return verdict.sign(self.config.validator_signer or self.config.validator_secret)
 
     def verdict(
         self,
@@ -176,7 +190,12 @@ class ReplayVerifier:
         comparison: dict[str, Any],
         t0: float,
     ) -> VerificationVerdictV3:
-        estimated_cu = estimate_cu(receipt, replay_compute_sec)
+        del t0
+        try:
+            manifest = self.find_manifest(receipt)
+            estimated_cu = estimate_cu(receipt, manifest=manifest, graph=self.fetch_graph(manifest))
+        except Exception:
+            estimated_cu = 1.0
         verdict = VerificationVerdictV3(
             verdict_id=f"{self.config.validator_hotkey}:{receipt.receipt_id}",
             receipt_id=receipt.receipt_id,
@@ -192,12 +211,27 @@ class ReplayVerifier:
             checked_unix=time.time(),
             comparison=comparison,
         )
-        return verdict.sign(self.config.validator_secret)
+        return verdict.sign(self.config.validator_signer or self.config.validator_secret)
+
+    def fetch_graph(self, manifest: JobManifestV3) -> Graph:
+        graph = Graph.from_dict(json.loads(self.bucket.get(manifest.graph_ref.uri).decode("utf-8")))
+        if graph.graph_id() != manifest.graph_ref.sha256:
+            raise ValueError(f"graph hash mismatch for job {manifest.job_id}")
+        return graph
 
 
-def estimate_cu(receipt: JobReceiptV3, replay_compute_sec: float = 0.0) -> float:
-    compute = replay_compute_sec if replay_compute_sec > 0 else receipt.compute_sec
-    return compute + (receipt.claimed_bytes_read + receipt.claimed_bytes_written) / 1_000_000_000.0
+def estimate_cu(
+    receipt: JobReceiptV3,
+    replay_compute_sec: float = 0.0,
+    *,
+    manifest: JobManifestV3 | None = None,
+    graph: Graph | None = None,
+) -> float:
+    """Return deterministic expected CU; never trust receipt runtime or claimed IO."""
+    del receipt, replay_compute_sec
+    if manifest is None or graph is None:
+        return 1.0
+    return expected_compute_units(manifest, graph)
 
 
 def summarize_scores(
@@ -207,6 +241,7 @@ def summarize_scores(
     run_id: str,
     window_id: str | None = None,
     validator_secret: str = "validator-dev-secret",
+    validator_hotkey: str = "",
 ) -> dict[str, MinerScoreWindow]:
     window_id = window_id or f"run={run_id}"
     receipts: dict[str, JobReceiptV3] = {}
@@ -218,16 +253,24 @@ def summarize_scores(
     for uri in bucket.list(bucket.uri_for_key(paths.verdicts_prefix(netuid, run_id))):
         if uri.endswith(".json"):
             v = VerificationVerdictV3.from_dict(bucket.get_json(uri))
-            if not v.validator_signature or not verify_dict(v.unsigned_dict(), validator_secret, v.validator_signature):
+            if not v.validator_signature:
+                continue
+            identity = validator_hotkey or v.validator_hotkey
+            if not (
+                verify_identity_dict(v.unsigned_dict(), identity, v.validator_signature)
+                or verify_dict(v.unsigned_dict(), validator_secret, v.validator_signature)
+            ):
                 continue
             verdicts[v.receipt_id] = v
+    manifests: dict[str, JobManifestV3] = {}
+    graphs: dict[str, Graph] = {}
     windows: dict[str, MinerScoreWindow] = {}
     for receipt in receipts.values():
         hotkey = receipt.worker.hotkey_ss58
         w = windows.setdefault(hotkey, MinerScoreWindow(netuid=netuid, window_id=window_id, hotkey_ss58=hotkey))
         w.receipts += 1
         verdict = verdicts.get(receipt.receipt_id)
-        cu = estimate_cu(receipt, verdict.replay_compute_sec if verdict else 0.0)
+        cu = _expected_cu_for_receipt(bucket, netuid=netuid, receipt=receipt, manifests=manifests, graphs=graphs)
         if verdict is None:
             w.unsampled_cu += cu
         else:
@@ -252,3 +295,28 @@ def summarize_scores(
         {hotkey: window.to_dict() for hotkey, window in windows.items()},
     )
     return windows
+
+
+def _expected_cu_for_receipt(
+    bucket: ObjectStore,
+    *,
+    netuid: int,
+    receipt: JobReceiptV3,
+    manifests: dict[str, JobManifestV3],
+    graphs: dict[str, Graph],
+) -> float:
+    try:
+        manifest = manifests.get(receipt.job_id)
+        if manifest is None:
+            manifest_uri = bucket.uri_for_key(paths.job_manifest_key(netuid, receipt.run_id, receipt.job_id))
+            manifest = JobManifestV3.from_dict(bucket.get_json(manifest_uri))
+            manifests[receipt.job_id] = manifest
+        graph = graphs.get(manifest.graph_ref.sha256)
+        if graph is None:
+            graph = Graph.from_dict(json.loads(bucket.get(manifest.graph_ref.uri).decode("utf-8")))
+            if graph.graph_id() != manifest.graph_ref.sha256:
+                raise ValueError(f"graph hash mismatch for job {manifest.job_id}")
+            graphs[manifest.graph_ref.sha256] = graph
+        return estimate_cu(receipt, manifest=manifest, graph=graph)
+    except Exception:
+        return 1.0

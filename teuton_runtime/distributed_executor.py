@@ -13,7 +13,7 @@ import torch
 import torch.multiprocessing as mp
 
 from teuton_core.protocol import ArtifactDigest, ArtifactRef, JobManifestV3, JobReceiptV3, WorkerIdentity
-from teuton_core.signatures import HmacSigner
+from teuton_core.signatures import HmacSigner, Signer
 from . import tensor_io
 from .crypto import decode_envelope, encode_envelope, DrandTimelockProvider
 from .distributed_gpt import GPTTensorParallelRunner, TensorParallelContext
@@ -101,7 +101,8 @@ class DistributedJobExecutor:
         manifest: JobManifestV3,
         *,
         worker: WorkerIdentity,
-        miner_secret: str,
+        miner_secret: str = "miner-dev-secret",
+        miner_signer: Signer | None = None,
         fault_mode: str = "",
         fault_rate: float = 1.0,
         grants: dict[str, Any] | None = None,
@@ -112,6 +113,7 @@ class DistributedJobExecutor:
                 manifest,
                 worker=worker,
                 miner_secret=miner_secret,
+                miner_signer=miner_signer,
                 fault_mode=fault_mode,
                 fault_rate=fault_rate,
                 grants=grants,
@@ -125,10 +127,16 @@ class DistributedJobExecutor:
                         "reason": "manifest did not request gpt_tensor_parallel_v1",
                     }
                 )
-                receipt.sign(miner_secret)
+                receipt.sign(miner_signer or miner_secret)
             return receipt
 
-        return self._execute_gpt_tensor_parallel(manifest, worker=worker, miner_secret=miner_secret, grants=grants)
+        return self._execute_gpt_tensor_parallel(
+            manifest,
+            worker=worker,
+            miner_secret=miner_secret,
+            miner_signer=miner_signer,
+            grants=grants,
+        )
 
     def _execute_gpt_tensor_parallel(
         self,
@@ -136,6 +144,7 @@ class DistributedJobExecutor:
         *,
         worker: WorkerIdentity,
         miner_secret: str,
+        miner_signer: Signer | None = None,
         grants: dict[str, Any] | None,
     ) -> JobReceiptV3:
         if not all(str(d).startswith("cuda") for d in self.devices):
@@ -170,7 +179,7 @@ class DistributedJobExecutor:
         t_done = time.time()
         put_jobs: list[tuple[str, bytes]] = []
         output_digests: list[ArtifactDigest] = []
-        signer = HmacSigner(miner_secret, identity=worker.hotkey_ss58)
+        signer = miner_signer or HmacSigner(miner_secret, identity=worker.hotkey_ss58)
         output_sharding = dict(manifest.params.get("output_sharding") or {})
         for ref in manifest.outputs:
             if ref.name not in outputs:
@@ -239,7 +248,7 @@ class DistributedJobExecutor:
                 "sharding_plan_hash": hashlib.sha256(json.dumps(manifest.params.get("parallelism", {}), sort_keys=True).encode("utf-8")).hexdigest(),
             },
         )
-        return receipt.sign(miner_secret)
+        return receipt.sign(signer)
 
     def _load_inputs(self, refs: list[ArtifactRef], *, grants: dict[str, Any] | None) -> dict[str, torch.Tensor]:
         inputs: dict[str, torch.Tensor] = {}

@@ -50,11 +50,12 @@ def visualizer_snapshot(
 ) -> dict[str, Any]:
     config = config or VisualizerConfig()
     now = time.time()
-    machines = _machines(bucket, netuid=netuid, run_id=run_id, config=config, now=now)
     manifests = _load_manifests(bucket, netuid=netuid, run_id=run_id, max_jobs=config.max_jobs)
-    receipts = _load_receipts(bucket, netuid=netuid, run_id=run_id)
-    verdicts = _load_verdicts(bucket, netuid=netuid, run_id=run_id)
-    audit_results = _load_audit_results(bucket, netuid=netuid, run_id=run_id)
+    job_ids = {manifest.job_id for manifest, _role in manifests}
+    machines = _machines(bucket, netuid=netuid, run_id=run_id, config=config, now=now)
+    receipts = _load_receipts(bucket, netuid=netuid, run_id=run_id, job_ids=job_ids, max_items=config.max_jobs)
+    verdicts = _load_verdicts(bucket, netuid=netuid, run_id=run_id, job_ids=job_ids, max_items=config.max_jobs)
+    audit_results = _load_audit_results(bucket, netuid=netuid, run_id=run_id, job_ids=job_ids, max_items=config.max_jobs)
     score_points = _job_score_points(receipts, verdicts)
     jobs: list[dict[str, Any]] = []
     artifact_map: dict[str, dict[str, Any]] = {}
@@ -171,7 +172,7 @@ def _machines(bucket: ObjectStore, *, netuid: int, run_id: str, config: Visualiz
         )
 
     derived = sorted(
-        derive_miners_from_bucket(bucket, netuid=netuid, run_id=run_id),
+        derive_miners_from_bucket(bucket, netuid=netuid, run_id=run_id, max_objects=max(config.max_jobs * 2, 50)),
         key=lambda o: (o.worker_id is None, o.hotkey_ss58, o.worker_id or ""),
     )
 
@@ -355,40 +356,77 @@ def _find_manifest(bucket: ObjectStore, *, netuid: int, run_id: str, job_id: str
     return None
 
 
-def _load_receipts(bucket: ObjectStore, *, netuid: int, run_id: str) -> dict[str, JobReceiptV3]:
+def _load_receipts(
+    bucket: ObjectStore,
+    *,
+    netuid: int,
+    run_id: str,
+    job_ids: set[str] | None = None,
+    max_items: int | None = None,
+) -> dict[str, JobReceiptV3]:
     out: dict[str, JobReceiptV3] = {}
     for uri in bucket.list(bucket.uri_for_key(paths.receipts_prefix(netuid, run_id))):
+        if max_items is not None and len(out) >= max_items:
+            break
         if not uri.endswith(".json"):
             continue
         try:
             receipt = JobReceiptV3.from_dict(bucket.get_json(uri))
+            if job_ids and receipt.job_id not in job_ids:
+                continue
             out[receipt.job_id] = receipt
         except Exception:
             continue
     return out
 
 
-def _load_verdicts(bucket: ObjectStore, *, netuid: int, run_id: str) -> dict[str, list[VerificationVerdictV3]]:
+def _load_verdicts(
+    bucket: ObjectStore,
+    *,
+    netuid: int,
+    run_id: str,
+    job_ids: set[str] | None = None,
+    max_items: int | None = None,
+) -> dict[str, list[VerificationVerdictV3]]:
     out: dict[str, list[VerificationVerdictV3]] = {}
+    n = 0
     for uri in bucket.list(bucket.uri_for_key(paths.verdicts_prefix(netuid, run_id))):
+        if max_items is not None and n >= max_items:
+            break
         if not uri.endswith(".json"):
             continue
         try:
             verdict = VerificationVerdictV3.from_dict(bucket.get_json(uri))
+            if job_ids and verdict.job_id not in job_ids:
+                continue
             out.setdefault(verdict.job_id, []).append(verdict)
+            n += 1
         except Exception:
             continue
     return out
 
 
-def _load_audit_results(bucket: ObjectStore, *, netuid: int, run_id: str) -> dict[str, list[AuditResultV3]]:
+def _load_audit_results(
+    bucket: ObjectStore,
+    *,
+    netuid: int,
+    run_id: str,
+    job_ids: set[str] | None = None,
+    max_items: int | None = None,
+) -> dict[str, list[AuditResultV3]]:
     out: dict[str, list[AuditResultV3]] = {}
+    n = 0
     for uri in bucket.list(bucket.uri_for_key(paths.audit_results_prefix(netuid, run_id))):
+        if max_items is not None and n >= max_items:
+            break
         if not uri.endswith(".json"):
             continue
         try:
             audit = AuditResultV3.from_dict(bucket.get_json(uri))
+            if job_ids and audit.job_id not in job_ids:
+                continue
             out.setdefault(audit.job_id, []).append(audit)
+            n += 1
         except Exception:
             continue
     return out

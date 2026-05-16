@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from teuton_core.protocol import AuditResultV3, JobManifestV3, JobReceiptV3
-from teuton_core.signatures import verify_dict
+from teuton_core.signatures import Signer, verify_identity_dict
 from teuton_runtime.storage import ObjectStore
 from teuton_runtime.transport import ArtifactTransport
 from .audit import AuditReplayConfig, AuditReplayRunner
@@ -27,10 +27,12 @@ def run_audit_replay(
     bucket: ObjectStore,
     manifest: JobManifestV3,
     worker_hotkey: str,
-    owner_secret: str,
-    miner_secret: str,
-    device: str,
-    grants: dict[str, Any] | None,
+    auditor_signer: Signer | None = None,
+    owner_secret: str = "owner-dev-secret",
+    owner_hotkey: str = "",
+    miner_secret: str = "miner-dev-secret",
+    device: str = "cpu",
+    grants: dict[str, Any] | None = None,
     transport: ArtifactTransport | None = None,
 ) -> AuditResultV3:
     """Run one audit_replay manifest end-to-end and return the signed result.
@@ -45,9 +47,8 @@ def run_audit_replay(
     """
     target = JobManifestV3.from_dict(manifest.params["target_manifest"])
     if owner_secret != "skip":
-        if not target.owner_signature or not verify_dict(
-            target.unsigned_dict(), owner_secret, target.owner_signature
-        ):
+        owner_identity = owner_hotkey or owner_secret
+        if not target.owner_signature or not verify_identity_dict(target.unsigned_dict(), owner_identity, target.owner_signature):
             raise ValueError(
                 f"audit target manifest has bad owner signature: {target.job_id}"
             )
@@ -57,6 +58,7 @@ def run_audit_replay(
         bucket=bucket,
         config=AuditReplayConfig(
             owner_secret=owner_secret,
+            owner_hotkey=owner_hotkey,
             miner_secret=miner_secret,
             device=device,
         ),
@@ -69,4 +71,4 @@ def run_audit_replay(
         receipt=receipt,
         auditor_hotkey=worker_hotkey,
     )
-    return audit.sign(worker_hotkey)
+    return audit.sign(auditor_signer or worker_hotkey)

@@ -1,5 +1,5 @@
 # Public Teuton dashboard stack:
-#   discovery-ui  reads the bucket and serves the live fleet view on :8765
+#   dashboard     indexes bucket + chain into SQLite and serves the live view
 #   cloudflared   opens an outbound Cloudflare Tunnel and routes
 #                 https://<HOSTNAME> -> http://discovery-ui:8765
 #
@@ -11,6 +11,10 @@
 #   DOCKER_USER, S3_BUCKET, S3_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
 #   TEUTON_NETUID (default 3), TEUTON_DASHBOARD_TUNNEL_TOKEN
 #
+# Optional env:
+#   TEUTON_RUN_ID  (when empty/unset, dashboard auto-selects the latest run
+#     discovered from the bucket)
+#
 # To set everything up the first time, run scripts/setup_cloudflare_dashboard.py
 # locally with a Cloudflare API token; it creates the tunnel, the public
 # hostname route, and the DNS record, then prints the tunnel token to drop
@@ -18,7 +22,7 @@
 name: teuton-dashboard
 
 services:
-  discovery-ui:
+  dashboard:
     image: ${DOCKER_USER}/teuton:miner
     container_name: teuton-dashboard-ui
     restart: always
@@ -30,17 +34,26 @@ services:
       S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      TEUTON_RUN_ID: ${TEUTON_RUN_ID:-}
+      TEUTON_DASHBOARD_DB_PATH: ${TEUTON_DASHBOARD_DB_PATH:-/var/lib/teuton-dashboard/dashboard.sqlite3}
+      BT_NETWORK: ${BT_NETWORK:-finney}
+    volumes:
+      - dashboard-db:/var/lib/teuton-dashboard
     entrypoint:
       - teuton-v3
-      - discovery-ui
+      - dashboard-backend
     command:
       - --netuid=${TEUTON_NETUID:-3}
+      - --run-id=${TEUTON_RUN_ID:-}
+      - --db-path=${TEUTON_DASHBOARD_DB_PATH:-/var/lib/teuton-dashboard/dashboard.sqlite3}
       - --host=0.0.0.0
       - --port=8765
       - --refresh-sec=${TEUTON_DASHBOARD_REFRESH_SEC:-3.0}
-      - --snapshot-cache-sec=${TEUTON_DASHBOARD_CACHE_SEC:-1.5}
       - --max-jobs=${TEUTON_DASHBOARD_MAX_JOBS:-500}
       - --max-artifacts=${TEUTON_DASHBOARD_MAX_ARTIFACTS:-300}
+      - --bucket-poll-sec=${TEUTON_DASHBOARD_BUCKET_POLL_SEC:-5.0}
+      - --chain-poll-sec=${TEUTON_DASHBOARD_CHAIN_POLL_SEC:-30.0}
+      - --network=${BT_NETWORK:-finney}
       - --s3-bucket=${S3_BUCKET}
       - --s3-region=${S3_REGION:-us-east-1}
     expose:
@@ -55,7 +68,7 @@ services:
     container_name: teuton-dashboard-tunnel
     restart: always
     depends_on:
-      - discovery-ui
+      - dashboard
     environment:
       TUNNEL_TOKEN: ${TEUTON_DASHBOARD_TUNNEL_TOKEN}
       TUNNEL_METRICS: "0.0.0.0:2000"
@@ -94,3 +107,6 @@ networks:
   dashboard:
     name: teuton-dashboard
     driver: bridge
+
+volumes:
+  dashboard-db:

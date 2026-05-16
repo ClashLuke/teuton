@@ -37,6 +37,17 @@ export AUDIT_JOBS_SLEEP_SEC="${AUDIT_JOBS_SLEEP_SEC:-15}"
 export TEUTON_LOOP_SLEEP_SEC="${TEUTON_LOOP_SLEEP_SEC:-30}"
 export ORCHESTRATOR_STEPS="${ORCHESTRATOR_STEPS:-1000000}"
 export ORCHESTRATOR_TIMEOUT_SEC="${ORCHESTRATOR_TIMEOUT_SEC:-31536000}"
+if [ -z "${TEUTON_AUDIT_ELIGIBLE_HOTKEYS:-}" ] && [ -f bench/fleet.json ]; then
+    source .venv/bin/activate
+    export TEUTON_AUDIT_ELIGIBLE_HOTKEYS="$(
+        python - <<'PY'
+import json
+from pathlib import Path
+fleet = json.loads(Path("bench/fleet.json").read_text())
+print(",".join(fleet.get("audit_eligible_hotkeys") or []))
+PY
+    )"
+fi
 
 echo "RUN_ID=$RUN_ID  netuid=$TEUTON_NETUID  validator=$VALIDATOR_WALLET_NAME/$VALIDATOR_HOTKEY_NAME ($VALIDATOR_HOTKEY_SS58)"
 
@@ -48,8 +59,8 @@ doppler run --project arbos --config dev -- bash -lc '
 
     export DOCKER_USER S3_BUCKET S3_REGION S3_ENDPOINT_URL \
            AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY \
-           TEUTON_OWNER_SECRET TEUTON_MINER_SECRET TEUTON_VALIDATOR_SECRET \
-           TEUTON_ASSIGNMENT_SECRET TEUTON_ASSIGNMENT_CRYPTO \
+           TEUTON_OWNER_HOTKEY TEUTON_ASSIGNMENT_CRYPTO \
+           TEUTON_AUDIT_ELIGIBLE_HOTKEYS \
            TEUTON_NETUID RUN_ID \
            VALIDATOR_WALLET_NAME VALIDATOR_HOTKEY_NAME VALIDATOR_HOTKEY_SS58 \
            AUDIT_MODE AUDIT_SAMPLE_RATE AUDIT_MAX_JOBS AUDIT_JOBS_SLEEP_SEC \

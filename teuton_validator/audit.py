@@ -12,7 +12,7 @@ import torch
 
 from teuton_core.ir import Graph
 from teuton_core.protocol import ArtifactDigest, ArtifactRef, AuditResultV3, JobManifestV3, JobReceiptV3
-from teuton_core.signatures import HmacSigner, verify_dict
+from teuton_core.signatures import HmacSigner, IdentityVerifier, verify_dict, verify_identity_dict
 from teuton_runtime import tensor_io
 from teuton_runtime.crypto import decode_envelope, DrandTimelockProvider, TimelockPending
 from teuton_runtime.distributed_gpt import GPTTensorParallelRunner, TensorParallelContext
@@ -25,6 +25,7 @@ from teuton_runtime.transport import ArtifactTransport, DirectArtifactTransport
 @dataclass
 class AuditReplayConfig:
     owner_secret: str = "owner-dev-secret"
+    owner_hotkey: str = ""
     miner_secret: str = "miner-dev-secret"
     device: str = "cpu"
     max_sample_elements: int = 4096
@@ -103,6 +104,8 @@ class AuditReplayRunner:
             return True
         if not manifest.owner_signature:
             return False
+        if self.config.owner_hotkey:
+            return verify_identity_dict(manifest.unsigned_dict(), self.config.owner_hotkey, manifest.owner_signature)
         return verify_dict(manifest.unsigned_dict(), self.config.owner_secret, manifest.owner_signature)
 
     def miner_signing_secret(self, receipt: JobReceiptV3) -> str:
@@ -111,7 +114,10 @@ class AuditReplayRunner:
     def verify_receipt_signature(self, receipt: JobReceiptV3) -> bool:
         if not receipt.miner_signature:
             return False
-        return verify_dict(receipt.unsigned_dict(), self.miner_signing_secret(receipt), receipt.miner_signature)
+        return (
+            verify_identity_dict(receipt.unsigned_dict(), receipt.worker.hotkey_ss58, receipt.miner_signature)
+            or verify_dict(receipt.unsigned_dict(), self.miner_signing_secret(receipt), receipt.miner_signature)
+        )
 
     def fetch_graph(self, sha: str, uri: str) -> Graph:
         cached = self.graph_cache.get(sha)
@@ -150,7 +156,7 @@ class AuditReplayRunner:
             body = decode_envelope(
                 body,
                 ref.crypto,
-                verifier=HmacSigner(self.miner_signing_secret(receipt)),
+                verifier=IdentityVerifier(),
                 encryption_secret=self.config.encryption_secret,
                 timelock_provider=self.config.timelock_provider,
             )
@@ -173,7 +179,7 @@ class AuditReplayRunner:
             observed_body = decode_envelope(
                 self.transport.get(ref.uri, self.grants.get(ref.uri)),
                 ref.crypto,
-                verifier=HmacSigner(self.miner_signing_secret(receipt)),
+                verifier=IdentityVerifier(),
                 encryption_secret=self.config.encryption_secret,
                 timelock_provider=self.config.timelock_provider,
             )

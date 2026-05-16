@@ -17,6 +17,7 @@ from teuton_core.protocol import (
     VerificationPolicy,
     WorkerIdentity,
 )
+from teuton_core.signatures import Signer
 from teuton_core.wallet_crypto import AssignmentEncryptor, DevAssignmentCrypto, Ed25519SealedBoxAssignmentCrypto
 from teuton_orchestrator.scheduler import QuotaBook
 from teuton_runtime.discovery import build_discovery_backend
@@ -31,6 +32,7 @@ class AuditJobConfig:
     run_id: str
     validator_hotkey: str
     owner_secret: str = "owner-dev-secret"
+    owner_signer: Signer | None = None
     assignment_secret: str = "teuton-dev-assignment"
     grant_mode: str = "direct"
     grant_ttl_sec: int = 600
@@ -140,7 +142,7 @@ class AuditJobManager:
             deadline_unix=int(time.time()) + int(self.config.grant_ttl_sec),
             created_unix=int(time.time()),
             verification_policy=VerificationPolicy(critical=False),
-        ).sign(self.config.owner_secret)
+        ).sign(self.config.owner_signer or self.config.owner_secret)
         self.bucket.put_json(
             self.bucket.uri_for_key(paths.audit_job_manifest_key(self.config.netuid, self.config.run_id, job_id)),
             manifest.to_dict(),

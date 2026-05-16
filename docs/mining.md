@@ -50,16 +50,18 @@ Bittensor:
 - A funded coldkey with enough TAO to cover the registration burn on netuid 3
   (the current burn is printed before any extrinsic is submitted).
 
-Operator-supplied credentials (you will get these from the Teuton team):
+Operator-supplied configuration (you will get this from the Teuton team):
 
-- An S3 bucket name, region, and a pair of AWS keys with read/write to the
-  `v3/netuid=3/...` prefix.
-- The three shared HMAC secrets used by the dev signature scheme:
-  `TEUTON_OWNER_SECRET`, `TEUTON_MINER_SECRET`, `TEUTON_ASSIGNMENT_SECRET`.
+- The S3 bucket name and region. Third-party miners should not need an AWS
+  access key; the bucket must allow anonymous list/read for public job metadata
+  and anonymous heartbeat writes under the miner discovery prefix.
+- The validator/owner hotkey SS58 (`TEUTON_OWNER_HOTKEY`) if it is not already
+  baked into the miner image.
 
-> Without those four credentials the miner cannot read manifests or write
-> receipts. Reach out to coordinate before you generate keys so you do not
-> burn TAO on a hotkey that will sit idle.
+> Job inputs, outputs, and receipts move through encrypted presigned grants.
+> If a miner is asking for `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, either
+> it is on an old image or the bucket policy is missing the public miner access
+> described above.
 
 ## 1. Install Teuton And Bittensor
 
@@ -187,7 +189,7 @@ btcli subnets metagraph --netuid 3 --network finney \
 You should see your hotkey listed with a UID. Send the SS58s to the
 operator so they can add them to the assignment plan.
 
-## 5. Get Operator Credentials
+## 5. Get Operator Configuration
 
 From the Teuton operator you will need:
 
@@ -195,15 +197,13 @@ From the Teuton operator you will need:
 | ------------------------- | ------------------------------------------------------------ |
 | `S3_BUCKET`               | Bucket the orchestrator writes manifests/grants into.         |
 | `S3_REGION`               | Bucket region (defaults to `us-east-1`).                      |
-| `AWS_ACCESS_KEY_ID`       | Read jobs/grants, write receipts.                             |
-| `AWS_SECRET_ACCESS_KEY`   | Pair for the access key.                                      |
-| `TEUTON_OWNER_SECRET`      | Verify orchestrator signatures on manifests.                  |
-| `TEUTON_MINER_SECRET`      | Sign your receipts.                                           |
-| `TEUTON_ASSIGNMENT_SECRET` | Authenticate encrypted assignment envelopes.                  |
+| `TEUTON_OWNER_HOTKEY`      | Verify validator/orchestrator hotkey signatures on manifests. |
 | `DOCKER_USER` / `DOCKER_PAT` | (Docker path) pull the prebuilt `teuton:miner` image.        |
 
-The miner only needs read+write under `v3/netuid=3/`. Operators usually
-hand out a scoped IAM key — do not commit the secret anywhere.
+The miner uses anonymous S3 access for public job metadata and discovery
+heartbeats. Per-job artifacts and receipts use encrypted presigned URLs scoped
+to the exact objects for that assignment. Receipts and signed artifacts are
+signed by the miner hotkey mounted from the Bittensor wallet.
 
 ## 6. Run The Miner (Docker, recommended)
 
@@ -219,27 +219,21 @@ Create `/root/teuton/.env` on the host:
 mkdir -p /root/teuton
 cat > /root/teuton/.env <<'EOF'
 DOCKER_USER=<operator-supplied>
+
+# Optional if these public defaults are not already baked into the image:
 S3_BUCKET=<operator-supplied>
 S3_REGION=us-east-1
-AWS_ACCESS_KEY_ID=<operator-supplied>
-AWS_SECRET_ACCESS_KEY=<operator-supplied>
+TEUTON_OWNER_HOTKEY=<validator/orchestrator hotkey ss58>
 
-TEUTON_NETUID=3
-TEUTON_OWNER_SECRET=<operator-supplied>
-TEUTON_MINER_SECRET=<operator-supplied>
-TEUTON_ASSIGNMENT_SECRET=<operator-supplied>
-TEUTON_ASSIGNMENT_CRYPTO=ed25519
-
-MINER_WALLET_NAME=teuton_mining
-MINER_HOTKEY_NAME=teuton_miner_sn3_1
-MINER_HOTKEY_SS58=<ss58 from step 3>
+MINER_COLDKEY=teuton_mining
+MINER_HOTKEY=teuton_miner_sn3_1
 MINER_DEVICES=cuda
 EOF
 chmod 600 /root/teuton/.env
 ```
 
 Make sure your hotkey files are at
-`/root/.bittensor/wallets/teuton_mining/hotkeys/<MINER_HOTKEY_NAME>{,pub.txt}`.
+`/root/.bittensor/wallets/<MINER_COLDKEY>/hotkeys/<MINER_HOTKEY>{,pub.txt}`.
 The compose file mounts that directory read-only into the container; the
 files never leave the host.
 
@@ -256,6 +250,20 @@ docker compose logs -f miner
 
 You should see the miner banner print its baked `run_id`, then a stream of
 `[worker] heartbeat …` lines.
+
+For a one-off direct Docker run without compose:
+
+```bash
+docker run --gpus all \
+  -v /root/.bittensor/wallets:/root/.bittensor/wallets:ro \
+  -e MINER_COLDKEY=teuton_mining \
+  -e MINER_HOTKEY=teuton_miner_sn3_1 \
+  <docker-user>/teuton:miner miner
+```
+
+If the image was not built with public defaults, add `-e S3_BUCKET=...`,
+`-e S3_REGION=us-east-1`, `-e TEUTON_RUN_ID=...`, and
+`-e TEUTON_OWNER_HOTKEY=...`.
 
 ### Multi-GPU host
 
@@ -290,19 +298,15 @@ For development or hosts where Docker isn't an option:
 source .venv/bin/activate
 export S3_BUCKET=...
 export S3_REGION=us-east-1
-export AWS_ACCESS_KEY_ID=...
-export AWS_SECRET_ACCESS_KEY=...
-export TEUTON_OWNER_SECRET=...
-export TEUTON_MINER_SECRET=...
-export TEUTON_ASSIGNMENT_SECRET=...
+export TEUTON_OWNER_HOTKEY=<validator/orchestrator hotkey ss58>
 
 teuton-v3 miner \
     --netuid 3 \
     --run-id   "$TEUTON_RUN_ID" \
-    --hotkey   "<miner ss58>" \
     --hotkey-name teuton_miner_sn3_1 \
     --wallet-name teuton_mining \
     --wallet-path "$HOME/.bittensor/wallets" \
+    --owner-hotkey "$TEUTON_OWNER_HOTKEY" \
     --devices cuda \
     --grant-mode presigned \
     --assignment-crypto ed25519 \
@@ -367,11 +371,11 @@ Production miners always use `presigned`:
   the exact input/output URIs of one job. The miner decrypts the envelope,
   verifies it matches the public manifest, and uses those URLs only.
 
-Even in `presigned` mode the miner still needs basic bucket access to
-*list and read* the manifest/grant objects themselves. Operators typically
-issue a scoped IAM key with read on `v3/netuid=3/jobs/`,
-`v3/netuid=3/assignments/`, and read+write on `v3/netuid=3/receipts/` and
-`v3/netuid=3/miners/` (heartbeats).
+In `presigned` mode a third-party miner does not need an S3 key. It uses
+anonymous bucket access to list/read manifests and encrypted grant envelopes,
+publishes heartbeats to the public miner discovery prefix, then uses the
+decrypted presigned URLs for assignment inputs, outputs, receipts, and audit
+results.
 
 ## Heartbeats
 
@@ -422,9 +426,9 @@ Supported modes: `partial_corrupt`, `wrong_output`, `skip_compute`.
 - **`AssignmentDecryptError` / `cannot decrypt grant`** — the hotkey on disk
   is not ED25519. Re-generate with `scripts/generate_ed25519_hotkey.py` and
   re-register. Confirm `pub.txt` shows `"cryptoType": 0`.
-- **No heartbeats appearing in the bucket** — usually a credentials problem.
-  Re-check the four AWS variables and confirm the IAM principal can `PutObject`
-  under `v3/netuid=3/miners/<your-ss58>/`.
+- **No heartbeats appearing in the bucket** — usually a bucket policy or old
+  image problem. Confirm the miner image includes anonymous S3 support and the
+  bucket allows public `PutObject` under `v3/netuid=3/miners/<your-ss58>/`.
 - **Container exits with `nvidia-container-cli: requirement error`** —
   install the NVIDIA Container Toolkit and restart Docker
   (`sudo systemctl restart docker`).

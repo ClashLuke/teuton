@@ -14,9 +14,7 @@
 #
 # Required env (passed in via doppler run / host .env):
 #   DOCKER_USER, DOCKER_PAT, S3_BUCKET, S3_REGION, AWS_ACCESS_KEY_ID,
-#   AWS_SECRET_ACCESS_KEY, TEUTON_NETUID (default 3),
-#   TEUTON_OWNER_SECRET, TEUTON_MINER_SECRET, TEUTON_VALIDATOR_SECRET,
-#   TEUTON_ASSIGNMENT_SECRET, VALIDATOR_HOTKEY_SS58,
+#   AWS_SECRET_ACCESS_KEY, TEUTON_NETUID (default 3), VALIDATOR_HOTKEY_SS58,
 #   VALIDATOR_WALLET_NAME (default teutonic), VALIDATOR_HOTKEY_NAME (default default),
 #   TEUTON_AUDIT_ELIGIBLE_HOTKEYS (comma-separated SS58 allowlist of on-chain
 #     miner hotkeys allowed to receive audit_replay jobs and whose
@@ -37,10 +35,7 @@ x-common-env: &common-env
   # Optional runtime run-id override. Empty/unset falls back to the
   # image-baked TEUTON_BAKED_RUN_ID (resolved in entrypoint.sh).
   TEUTON_RUN_ID: ${TEUTON_RUN_ID:-${RUN_ID:-}}
-  TEUTON_OWNER_SECRET: ${TEUTON_OWNER_SECRET}
-  TEUTON_MINER_SECRET: ${TEUTON_MINER_SECRET}
-  TEUTON_VALIDATOR_SECRET: ${TEUTON_VALIDATOR_SECRET}
-  TEUTON_ASSIGNMENT_SECRET: ${TEUTON_ASSIGNMENT_SECRET}
+  TEUTON_OWNER_HOTKEY: ${TEUTON_OWNER_HOTKEY:-${VALIDATOR_HOTKEY_SS58}}
   TEUTON_ASSIGNMENT_CRYPTO: ${TEUTON_ASSIGNMENT_CRYPTO:-ed25519}
   TEUTON_LOOP_SLEEP_SEC: ${TEUTON_LOOP_SLEEP_SEC:-30}
   TEUTON_AUDIT_ELIGIBLE_HOTKEYS: ${TEUTON_AUDIT_ELIGIBLE_HOTKEYS:-}
@@ -55,9 +50,10 @@ services:
   # NOTE: the orchestrator is intentionally NOT a service in this compose file.
   # The orchestrator is dev-side code that we edit here in the repo and
   # launch directly against the running fleet via `scripts/run_orchestrator.sh`
-  # (or `python -m teuton_core.cli orchestrator ...`). Miners, validators and
-  # auditors are generic workers that pull job graphs from the bucket and
-  # execute them; they don't care what task is on the wire.
+  # (or `python -m teuton_core.cli orchestrator ...`). Miners (including the
+  # audit-eligible ones that double as peer auditors) and validators are
+  # generic workers that pull job graphs from the bucket and execute them;
+  # they don't care what task is on the wire.
   validator:
     image: ${DOCKER_USER}/teuton:validator
     container_name: teuton-validator
@@ -70,6 +66,7 @@ services:
     command:
       - --netuid=${TEUTON_NETUID:-3}
       - --validator-hotkey=${VALIDATOR_HOTKEY_SS58}
+      - --wallet-path=/root/.bittensor/wallets
       - --wallet-name=${VALIDATOR_WALLET_NAME:-teutonic}
       - --hotkey-name=${VALIDATOR_HOTKEY_NAME:-default}
       - --network=finney
@@ -80,9 +77,7 @@ services:
       - --audit-mode=${AUDIT_MODE:-consume}
       - --s3-bucket=${S3_BUCKET}
       - --s3-region=${S3_REGION:-us-east-1}
-      - --owner-secret=${TEUTON_OWNER_SECRET}
-      - --miner-secret=${TEUTON_MINER_SECRET}
-      - --validator-secret=${TEUTON_VALIDATOR_SECRET}
+      - --audit-eligible-hotkeys=${TEUTON_AUDIT_ELIGIBLE_HOTKEYS:-}
     labels:
       - com.centurylinklabs.watchtower.enable=true
 
@@ -95,22 +90,23 @@ services:
       <<: *common-env
       TEUTON_ROLE: audit-jobs
       TEUTON_LOOP_SLEEP_SEC: ${AUDIT_JOBS_SLEEP_SEC:-15}
-      # Auditor hotkeys are NOT on the netuid 3 metagraph, so the ed25519
-      # sealed-grant path can't resolve them. Use dev (HMAC) crypto for the
-      # audit-jobs side; the auditor container uses the same shared secret.
-      TEUTON_ASSIGNMENT_CRYPTO: dev
     volumes: *common-volumes
     command:
       - --netuid=${TEUTON_NETUID:-3}
       - --validator-hotkey=${VALIDATOR_HOTKEY_SS58}
+      - --wallet-path=/root/.bittensor/wallets
+      - --wallet-name=${VALIDATOR_WALLET_NAME:-teutonic}
+      - --hotkey-name=${VALIDATOR_HOTKEY_NAME:-default}
       - --sample-rate=${AUDIT_SAMPLE_RATE:-0.2}
       - --max-jobs=${AUDIT_MAX_JOBS:-50}
       - --s3-bucket=${S3_BUCKET}
       - --s3-region=${S3_REGION:-us-east-1}
       - --grant-mode=presigned
-      - --assignment-crypto=dev
-      - --assignment-secret=${TEUTON_ASSIGNMENT_SECRET}
-      - --owner-secret=${TEUTON_OWNER_SECRET}
+      # Audit-eligible hotkeys are on-chain miner hotkeys, so the ed25519
+      # sealed-grant path resolves them via the metagraph just like training
+      # jobs. No more dev (HMAC) escape hatch.
+      - --assignment-crypto=ed25519
+      - --audit-eligible-hotkeys=${TEUTON_AUDIT_ELIGIBLE_HOTKEYS:-}
     labels:
       - com.centurylinklabs.watchtower.enable=true
 

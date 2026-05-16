@@ -7,10 +7,16 @@
 #   4. docker login (PAT piped from Doppler)
 #   5. docker compose -f compose.miner.yml up -d
 #
-# Required env on the remote (via /root/teuton/.env):
-#   DOCKER_USER, S3_BUCKET, S3_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
-#   TEUTON_NETUID (default 3), MINER_HOTKEY_SS58, MINER_HOTKEY_NAME,
-#   TEUTON_OWNER_SECRET, TEUTON_MINER_SECRET, TEUTON_ASSIGNMENT_SECRET
+# Required env on the remote (via /root/teuton/.env or image bake):
+#   DOCKER_USER, MINER_HOTKEY_NAME (or MINER_HOTKEY)
+#
+# Optional env:
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  (operator/internal deployments
+#       only; third-party miners normally use anonymous bucket access plus
+#       encrypted presigned grants)
+#   TEUTON_AUDIT_ELIGIBLE_HOTKEYS  (CSV of SS58s; if MINER_HOTKEY_SS58 appears
+#       in this list, the miner also picks up audit_replay jobs assigned
+#       to it from the bucket, in addition to its normal training work)
 #
 # RUN_ID is optional here: when unset, the image's baked TEUTON_BAKED_RUN_ID
 # (set at `docker build --build-arg TEUTON_RUN_ID=...`) is used. Set RUN_ID
@@ -29,36 +35,21 @@ services:
       S3_BUCKET: ${S3_BUCKET}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
-      TEUTON_OWNER_SECRET: ${TEUTON_OWNER_SECRET}
-      TEUTON_MINER_SECRET: ${TEUTON_MINER_SECRET}
-      TEUTON_ASSIGNMENT_SECRET: ${TEUTON_ASSIGNMENT_SECRET}
+      TEUTON_OWNER_HOTKEY: ${TEUTON_OWNER_HOTKEY:-}
       TEUTON_ASSIGNMENT_CRYPTO: ${TEUTON_ASSIGNMENT_CRYPTO:-ed25519}
+      TEUTON_AUDIT_ELIGIBLE_HOTKEYS: ${TEUTON_AUDIT_ELIGIBLE_HOTKEYS:-}
       # Optional runtime override of the run id. Empty/unset falls back to
       # the image-baked TEUTON_BAKED_RUN_ID (resolved in entrypoint.sh).
       TEUTON_RUN_ID: ${TEUTON_RUN_ID:-${RUN_ID:-}}
       BT_WALLET_PATH: /root/.bittensor/wallets
-      BT_WALLET_NAME: ${MINER_WALLET_NAME:-teuton_mining}
-      BT_HOTKEY_NAME: ${MINER_HOTKEY_NAME}
+      BT_WALLET_NAME: ${MINER_COLDKEY:-${MINER_WALLET_NAME:-teuton_mining}}
+      BT_HOTKEY_NAME: ${MINER_HOTKEY:-${MINER_HOTKEY_NAME}}
     volumes:
       - /root/.bittensor/wallets:/root/.bittensor/wallets:ro
-    command:
-      - --netuid=${TEUTON_NETUID:-3}
-      - --hotkey=${MINER_HOTKEY_SS58}
-      - --devices=${MINER_DEVICES:-cuda}
-      - --wallet-path=/root/.bittensor/wallets
-      - --wallet-name=${MINER_WALLET_NAME:-teuton_mining}
-      - --hotkey-name=${MINER_HOTKEY_NAME}
-      - --grant-mode=presigned
-      - --assignment-crypto=ed25519
-      - --discovery-backend=bucket
-      - --poll-interval=0.5
-      - --s3-bucket=${S3_BUCKET}
-      - --s3-region=${S3_REGION:-us-east-1}
-      - --miner-secret=${TEUTON_MINER_SECRET}
     deploy:
       resources:
         reservations:

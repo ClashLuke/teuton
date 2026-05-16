@@ -172,6 +172,7 @@ def derive_miners_from_bucket(
     *,
     netuid: int,
     run_id: str | None,
+    max_objects: int | None = None,
 ) -> list[BucketMinerObservation]:
     """Reconstruct miner identities from durable bucket artifacts.
 
@@ -200,12 +201,16 @@ def derive_miners_from_bucket(
         obs.n_receipts += receipts
 
     run_ids = [run_id] if run_id else _list_run_ids_from_receipts(bucket, netuid=netuid)
+    scanned = 0
     for rid in run_ids:
         if not rid:
             continue
         for uri in bucket.list(bucket.uri_for_key(paths.receipts_prefix(netuid, rid))):
+            if max_objects is not None and scanned >= max_objects:
+                return sorted(by_key.values(), key=lambda o: (o.hotkey_ss58, o.worker_id or ""))
             if not uri.endswith(".json"):
                 continue
+            scanned += 1
             hotkey = _segment_value(uri, "hotkey=")
             if not hotkey:
                 continue
@@ -213,8 +218,11 @@ def derive_miners_from_bucket(
             ts = int((head or {}).get("mtime_unix") or 0)
             _bump(hotkey, None, source="receipts", ts=ts, receipts=1)
         for uri in bucket.list(bucket.uri_for_key(paths.jobs_prefix(netuid, rid))):
+            if max_objects is not None and scanned >= max_objects:
+                return sorted(by_key.values(), key=lambda o: (o.hotkey_ss58, o.worker_id or ""))
             if not uri.endswith("/manifest.json"):
                 continue
+            scanned += 1
             try:
                 manifest = JobManifestV3.from_dict(bucket.get_json(uri))
             except Exception:

@@ -18,17 +18,18 @@ export AWS_ACCESS_KEY_ID=...
 export AWS_SECRET_ACCESS_KEY=...
 ```
 
-Dev signature secrets:
+Production signatures:
 
 ```bash
-export TEUTON_OWNER_SECRET=owner-dev-secret
-export TEUTON_MINER_SECRET=miner-dev-secret
-export TEUTON_VALIDATOR_SECRET=validator-dev-secret
+export VALIDATOR_WALLET_NAME=teutonic
+export VALIDATOR_HOTKEY_NAME=default
+export VALIDATOR_HOTKEY_SS58=<validator hotkey ss58>
+export TEUTON_OWNER_HOTKEY="$VALIDATOR_HOTKEY_SS58"
 ```
 
-All three must match the secrets used by the orchestrator, miners, and
-validator during a dev run. Production subnet mode should replace this with
-wallet-backed signatures.
+The validator hotkey signs verdicts and also acts as the trusted
+owner/orchestrator identity for manifest signatures. Miners verify manifests
+against `TEUTON_OWNER_HOTKEY` and sign receipts with their own mounted hotkeys.
 
 ## Dry-Run Validator
 
@@ -67,12 +68,12 @@ Then run:
 ```bash
 teuton-v3 validator \
   --run-id RUN_ID \
-  --validator-hotkey VALIDATOR_HOTKEY \
+  --validator-hotkey "$VALIDATOR_HOTKEY_SS58" \
   --sample-rate 1.0 \
   --publish-weights \
   --set-weights \
-  --wallet-name WALLET_NAME \
-  --hotkey-name HOTKEY_NAME \
+  --wallet-name "$VALIDATOR_WALLET_NAME" \
+  --hotkey-name "$VALIDATOR_HOTKEY_NAME" \
   --network finney \
   --netuid NETUID
 ```

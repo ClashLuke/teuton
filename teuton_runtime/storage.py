@@ -133,12 +133,14 @@ class S3Bucket:
     ) -> None:
         try:
             import boto3
+            from botocore import UNSIGNED
             from botocore.config import Config
         except ImportError as e:
             raise ImportError("boto3 is required for S3Bucket. Install with `uv pip install boto3`.") from e
 
+        use_unsigned = not access_key and not secret_key
         config = Config(
-            signature_version="s3v4",
+            signature_version=UNSIGNED if use_unsigned else "s3v4",
             retries={"max_attempts": 5, "mode": "adaptive"},
             region_name=region,
             connect_timeout=10,

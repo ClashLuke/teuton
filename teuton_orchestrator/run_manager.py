@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from teuton_core import paths
 from teuton_core.metagraph import BtcliMetagraphHotkeyResolver, MetagraphHotkeyResolver
 from teuton_core.protocol import ArtifactCryptoPolicy, ArtifactRef, AssignmentGrantV3, EncryptedAssignmentGrantV3, GraphRef, JobManifestV3, ResourceRequirements, VerificationPolicy, WorkerIdentity
+from teuton_core.signatures import Signer
 from teuton_core.wallet_crypto import AssignmentEncryptor, DevAssignmentCrypto, Ed25519SealedBoxAssignmentCrypto
 from teuton_runtime.discovery import build_discovery_backend
 from teuton_runtime.grants import broker_for_mode, PresignedUrlBroker
@@ -24,6 +25,7 @@ class RunConfig:
     task: str = "mlp"
     max_steps: int = 1
     owner_secret: str = "owner-dev-secret"
+    owner_signer: Signer | None = None
     crypto_policy: ArtifactCryptoPolicy | None = None
     grant_mode: str = "direct"
     grant_ttl_sec: int = 600
@@ -249,7 +251,7 @@ class RunManager:
             created_unix=now,
             resource_requirements=requirements,
             verification_policy=VerificationPolicy(critical=kind in {"outer_step"}),
-        ).sign(self.config.owner_secret)
+        ).sign(self.config.owner_signer or self.config.owner_secret)
         self.bucket.put_json(
             self.bucket.uri_for_key(paths.job_manifest_key(self.config.netuid, self.config.run_id, job_id)),
             manifest.to_dict(),

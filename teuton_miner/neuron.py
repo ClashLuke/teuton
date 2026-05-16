@@ -33,6 +33,7 @@ class MinerNeuronConfig:
     discovery_backend: str = "bucket"
     audit_eligible_hotkeys: list[str] = field(default_factory=list)
     owner_secret: str = "owner-dev-secret"
+    owner_hotkey: str = ""
 
 
 class MinerNeuron:
@@ -64,6 +65,7 @@ class MinerNeuron:
                         discovery_backend=config.discovery_backend,
                         audit_eligible_hotkeys=list(config.audit_eligible_hotkeys),
                         owner_secret=config.owner_secret,
+                        owner_hotkey=config.owner_hotkey,
                     ),
                 )
             ]
@@ -91,6 +93,7 @@ class MinerNeuron:
                         discovery_backend=config.discovery_backend,
                         audit_eligible_hotkeys=list(config.audit_eligible_hotkeys),
                         owner_secret=config.owner_secret,
+                        owner_hotkey=config.owner_hotkey,
                     ),
                 )
                 for i, device in enumerate(config.devices)

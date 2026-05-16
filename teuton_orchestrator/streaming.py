@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from teuton_core import paths
 from teuton_core.metagraph import BtcliMetagraphHotkeyResolver, MetagraphHotkeyResolver
 from teuton_core.protocol import ArtifactCryptoPolicy, ArtifactRef, AssignmentGrantV3, GraphRef, JobManifestV3, ResourceRequirements, VerificationPolicy, WorkerIdentity
+from teuton_core.signatures import Signer
 from teuton_core.telemetry import TelemetryWriter
 from teuton_core.wallet_crypto import AssignmentEncryptor, DevAssignmentCrypto, Ed25519SealedBoxAssignmentCrypto
 from teuton_runtime.discovery import build_discovery_backend
@@ -28,6 +29,7 @@ class StreamingRunConfig:
     task: str = "gpt_pipe"
     max_epochs: int = 1
     owner_secret: str = "owner-dev-secret"
+    owner_signer: Signer | None = None
     crypto_policy: ArtifactCryptoPolicy | None = None
     grant_mode: str = "direct"
     grant_ttl_sec: int = 600
@@ -289,7 +291,7 @@ class StreamingRunManager:
             created_unix=now,
             resource_requirements=requirements,
             verification_policy=VerificationPolicy(critical=kind == "pipe_outer"),
-        ).sign(self.config.owner_secret)
+        ).sign(self.config.owner_signer or self.config.owner_secret)
         self.bucket.put_json(self.bucket.uri_for_key(paths.job_manifest_key(self.config.netuid, self.config.run_id, job_id)), manifest.to_dict())
         self.emit_assignment_grant(manifest)
         self.emitted.append(job_id)

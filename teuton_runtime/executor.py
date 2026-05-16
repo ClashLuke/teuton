@@ -11,7 +11,7 @@ import torch
 
 from teuton_core.ir import Graph
 from teuton_core.protocol import ArtifactDigest, ArtifactRef, JobManifestV3, JobReceiptV3, WorkerIdentity
-from teuton_core.signatures import HmacSigner
+from teuton_core.signatures import HmacSigner, IdentityVerifier, Signer
 from . import tensor_io
 from .crypto import decode_envelope, encode_envelope, artifact_digest_from_blob, DrandTimelockProvider
 from .eval import evaluate
@@ -76,7 +76,7 @@ class JobExecutor:
         body = decode_envelope(
             body,
             ref.crypto,
-            verifier=HmacSigner("miner-dev-secret"),
+            verifier=IdentityVerifier(),
             encryption_secret=self.encryption_secret,
             timelock_provider=self.timelock_provider,
         )
@@ -144,7 +144,8 @@ class JobExecutor:
         manifest: JobManifestV3,
         *,
         worker: WorkerIdentity,
-        miner_secret: str,
+        miner_secret: str = "miner-dev-secret",
+        miner_signer: Signer | None = None,
         fault_mode: str = "",
         fault_rate: float = 1.0,
         grants: dict[str, Any] | None = None,
@@ -174,7 +175,7 @@ class JobExecutor:
 
         put_jobs: list[tuple[str, bytes]] = []
         output_digests: list[ArtifactDigest] = []
-        artifact_signer = HmacSigner(miner_secret, identity=worker.hotkey_ss58)
+        artifact_signer = miner_signer or HmacSigner(miner_secret, identity=worker.hotkey_ss58)
         for ref in manifest.outputs:
             if ref.name not in outputs:
                 raise KeyError(f"graph did not produce output {ref.name!r}")
@@ -214,7 +215,7 @@ class JobExecutor:
             claimed_bytes_read=sum(d.size_bytes for d in input_digests),
             claimed_bytes_written=sum(d.size_bytes for d in output_digests),
         )
-        return receipt.sign(miner_secret)
+        return receipt.sign(artifact_signer)
 
     @staticmethod
     def apply_faults(

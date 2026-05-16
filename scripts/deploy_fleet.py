@@ -12,10 +12,15 @@ For each pod the script:
 
 Usage:
     doppler run --project arbos --config dev -- \\
-        python scripts/deploy_fleet.py [--only miner|auditor|multi-miner] \\
+        python scripts/deploy_fleet.py [--only miner|multi-miner] \\
                                        [--host-filter <huid_or_pod_id>]
 
 Set RUN_ID via --run-id or it falls back to /tmp/teuton_sn3_run_id.
+
+NOTE: the dedicated `auditor` deployment role has been retired. Audit work
+is now done by audit-eligible miners (see ``audit_eligible_hotkeys`` in
+fleet.json and the ``TEUTON_AUDIT_ELIGIBLE_HOTKEYS`` env propagated to
+each miner's `.env`).
 """
 from __future__ import annotations
 
@@ -39,12 +44,6 @@ REQUIRED_ENV_KEYS = [
     "DOCKER_PAT",
     "S3_BUCKET",
     "S3_REGION",
-    "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY",
-    "TEUTON_OWNER_SECRET",
-    "TEUTON_MINER_SECRET",
-    "TEUTON_VALIDATOR_SECRET",
-    "TEUTON_ASSIGNMENT_SECRET",
 ]
 
 
@@ -138,14 +137,14 @@ def render_dotenv(env: dict[str, str], run_id: str | None, extras: dict[str, str
         "S3_BUCKET": env["S3_BUCKET"],
         "S3_REGION": env["S3_REGION"],
         "S3_ENDPOINT_URL": env.get("S3_ENDPOINT_URL", ""),
-        "AWS_ACCESS_KEY_ID": env["AWS_ACCESS_KEY_ID"],
-        "AWS_SECRET_ACCESS_KEY": env["AWS_SECRET_ACCESS_KEY"],
-        "TEUTON_OWNER_SECRET": env["TEUTON_OWNER_SECRET"],
-        "TEUTON_MINER_SECRET": env["TEUTON_MINER_SECRET"],
-        "TEUTON_VALIDATOR_SECRET": env["TEUTON_VALIDATOR_SECRET"],
-        "TEUTON_ASSIGNMENT_SECRET": env["TEUTON_ASSIGNMENT_SECRET"],
+        "TEUTON_OWNER_HOTKEY": env.get("TEUTON_OWNER_HOTKEY", env.get("VALIDATOR_HOTKEY_SS58", "")),
         "TEUTON_ASSIGNMENT_CRYPTO": env.get("TEUTON_ASSIGNMENT_CRYPTO", "ed25519"),
         "TEUTON_NETUID": env.get("TEUTON_NETUID", "3"),
+        # Operator-controlled allowlist of on-chain miner hotkeys that may
+        # additionally pick up audit_replay jobs (and whose AuditResultV3
+        # the validator will trust). Defaults to empty so non-allowlisted
+        # miners just run training jobs.
+        "TEUTON_AUDIT_ELIGIBLE_HOTKEYS": env.get("TEUTON_AUDIT_ELIGIBLE_HOTKEYS", ""),
     }
     base.update(extras)
     lines = [f"{k}={shlex.quote(v)}" for k, v in base.items()]
@@ -212,7 +211,7 @@ def deploy_single(host_cfg: dict, *, role: str, env: dict[str, str], run_id: str
     # Bring up the stack
     ssh_exec(
         ssh,
-        "cd /root/teuton && docker compose pull && docker compose up -d",
+        "cd /root/teuton && docker compose pull && docker compose up -d --remove-orphans",
     )
     out = ssh_exec(
         ssh,
@@ -276,31 +275,16 @@ def deploy(fleet: dict[str, Any], *, env: dict[str, str], run_id: str, only_role
                 compose_local=REPO_ROOT / m["compose"],
             )
 
-    # Auditor
-    if only_role in (None, "auditor"):
-        a = fleet.get("auditor")
-        if a and match(a):
-            ssh = a["ssh"]
-            host_cfg = {**ssh, "pod_id": a["pod_id"], "ssh": ssh, "huid": a["huid"]}
-            extras: dict[str, str] = {"AUDITOR_WALLET_NAME": "teuton_mining"}
-            for hk in a["hotkeys"]:
-                i = hk["index"]
-                extras[f"AUDITOR_HK_{i}"] = hk["ss58"]
-                extras[f"AUDITOR_HK_NAME_{i}"] = hk["name"]
-            deploy_single(
-                host_cfg,
-                role="auditor",
-                env=env,
-                run_id=run_id,
-                dotenv_extras=extras,
-                hotkeys=[hk["name"] for hk in a["hotkeys"]],
-                compose_local=REPO_ROOT / a["compose"],
-            )
+    # The legacy "auditor" deploy role has been retired -- audit replays now
+    # run inside audit-eligible miners (TEUTON_AUDIT_ELIGIBLE_HOTKEYS). The
+    # former auditor box (fleet["_legacy_auditor_host"]) is left as inert
+    # metadata; redeploying it as a multi-miner is an ops step outside the
+    # scope of this script.
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--only", choices=["miner", "multi-miner", "auditor"], default=None)
+    ap.add_argument("--only", choices=["miner", "multi-miner"], default=None)
     ap.add_argument("--host-filter", default=None, help="match by huid or pod_id")
     ap.add_argument("--run-id", default=None)
     ap.add_argument("--fleet", default=str(FLEET_JSON))
@@ -308,6 +292,14 @@ def main() -> int:
 
     fleet = json.loads(Path(args.fleet).read_text())
     env = load_env()
+
+    # Pick up the audit-eligible allowlist from fleet.json if the operator
+    # hasn't set it in the host env already. This way `deploy_fleet.py` and
+    # the validator stack agree on the same set of trusted auditors.
+    if not env.get("TEUTON_AUDIT_ELIGIBLE_HOTKEYS"):
+        fleet_allow = fleet.get("audit_eligible_hotkeys") or []
+        if fleet_allow:
+            env["TEUTON_AUDIT_ELIGIBLE_HOTKEYS"] = ",".join(fleet_allow)
 
     run_id = args.run_id
     if not run_id:
@@ -319,11 +311,11 @@ def main() -> int:
         fail("empty run id")
 
     print(f"deploy plan:")
-    print(f"  netuid    : {fleet.get('netuid')}")
-    print(f"  network   : {fleet.get('network')}")
-    print(f"  run_id    : {run_id}")
-    print(f"  miners    : {len(fleet.get('miners', []))} single-pod + {sum(len(m['hotkeys']) for m in fleet.get('multi_miner', []))} multi")
-    print(f"  auditor   : {fleet['auditor']['huid'] if fleet.get('auditor') else 'none'}")
+    print(f"  netuid              : {fleet.get('netuid')}")
+    print(f"  network             : {fleet.get('network')}")
+    print(f"  run_id              : {run_id}")
+    print(f"  miners              : {len(fleet.get('miners', []))} single-pod + {sum(len(m['hotkeys']) for m in fleet.get('multi_miner', []))} multi")
+    print(f"  audit_eligible_keys : {len((env.get('TEUTON_AUDIT_ELIGIBLE_HOTKEYS', '') or '').split(',')) if env.get('TEUTON_AUDIT_ELIGIBLE_HOTKEYS') else 0}")
     if args.only:
         print(f"  filter    : only={args.only}")
     if args.host_filter:

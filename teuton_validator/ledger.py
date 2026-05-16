@@ -39,6 +39,7 @@ def summarize_ledger(
     run_id: str,
     window_id: str | None = None,
     validator_secret: str = "validator-dev-secret",
+    validator_hotkey: str = "",
 ) -> LedgerSummaryV3:
     windows: dict[str, MinerScoreWindow] = summarize_scores(
         bucket,
@@ -46,6 +47,7 @@ def summarize_ledger(
         run_id=run_id,
         window_id=window_id or f"run={run_id}",
         validator_secret=validator_secret,
+        validator_hotkey=validator_hotkey,
     )
     out = LedgerSummaryV3()
     for hotkey, window in windows.items():

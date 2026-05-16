@@ -18,6 +18,7 @@ from teuton_core.protocol import (
     MinerIdentity,
     WorkerIdentity,
 )
+from teuton_core.signatures import HmacSigner, NativeEd25519HotkeySigner, Signer, verify_identity_dict
 from teuton_core.wallet_crypto import AssignmentDecryptor, DevAssignmentCrypto, Ed25519SealedBoxAssignmentCrypto
 from teuton_runtime.discovery import build_discovery_backend
 from teuton_runtime.distributed_executor import DistributedJobExecutor
@@ -55,6 +56,7 @@ class WorkerConfig:
     # activates its audit branch iff ``hotkey_ss58`` appears in this list.
     audit_eligible_hotkeys: list[str] = field(default_factory=list)
     owner_secret: str = "owner-dev-secret"
+    owner_hotkey: str = ""
 
 
 class MinerWorker:
@@ -70,6 +72,7 @@ class MinerWorker:
             self.executor = JobExecutor(bucket=bucket, device=config.device, encryption_secret=config.encryption_secret, transport=transport)
         self.transport = transport
         self.assignment_crypto: AssignmentDecryptor = self._assignment_decryptor()
+        self.signer: Signer = self._miner_signer()
         self.discovery = build_discovery_backend(
             config.discovery_backend,
             bucket=bucket,
@@ -112,6 +115,18 @@ class MinerWorker:
         )
         return Ed25519SealedBoxAssignmentCrypto.from_keyfile(keyfile)
 
+    def _miner_signer(self) -> Signer:
+        if self.config.wallet_name and self.config.hotkey_name:
+            signer = NativeEd25519HotkeySigner.from_wallet(
+                wallet_path=self.config.wallet_path,
+                wallet_name=self.config.wallet_name,
+                hotkey_name=self.config.hotkey_name,
+            )
+            if signer.identity != self.config.hotkey_ss58:
+                raise ValueError("miner hotkey file does not match configured hotkey SS58")
+            return signer
+        return HmacSigner(self.config.hotkey_ss58, identity=self.config.hotkey_ss58)
+
     def _gpu_probe(self) -> None:
         for device in self.device_group:
             probe_torch_device(device)
@@ -135,6 +150,8 @@ class MinerWorker:
             manifest = JobManifestV3.from_dict(self.bucket.get_json(manifest_uri))
             if not self._eligible(manifest):
                 continue
+            if not self._verify_manifest_signature(manifest):
+                continue
             if all(self.bucket.exists(ref.uri) for ref in manifest.outputs):
                 continue
             if not all(self.bucket.exists(ref.uri) for ref in manifest.inputs):
@@ -145,6 +162,7 @@ class MinerWorker:
                 manifest,
                 worker=self.identity,
                 miner_secret=self.config.miner_secret,
+                miner_signer=self.signer,
                 fault_mode=self.config.fault_mode,
                 fault_rate=self.config.fault_rate,
                 grants=grants,
@@ -195,6 +213,8 @@ class MinerWorker:
                 continue
             if not self._eligible(manifest):
                 continue
+            if not self._verify_manifest_signature(manifest):
+                continue
             if manifest.outputs and all(self.bucket.exists(ref.uri) for ref in manifest.outputs):
                 continue
             grant = self._load_audit_assignment_grant(manifest) if self.config.grant_mode != "direct" else None
@@ -204,7 +224,9 @@ class MinerWorker:
                     bucket=self.bucket,
                     manifest=manifest,
                     worker_hotkey=self.config.hotkey_ss58,
+                    auditor_signer=self.signer,
                     owner_secret=self.config.owner_secret,
+                    owner_hotkey=self.config.owner_hotkey,
                     miner_secret=self.config.miner_secret,
                     device=self.config.device,
                     grants=grants,
@@ -321,6 +343,15 @@ class MinerWorker:
         if req.placement == "single_host" and len(self.device_group) < req.min_gpus:
             return False
         return manifest.assigned_worker in (None, self.config.worker_id)
+
+    def _verify_manifest_signature(self, manifest: JobManifestV3) -> bool:
+        if self.config.owner_secret == "skip":
+            return True
+        if not manifest.owner_signature:
+            return False
+        if self.config.owner_hotkey:
+            return verify_identity_dict(manifest.unsigned_dict(), self.config.owner_hotkey, manifest.owner_signature)
+        return verify_identity_dict(manifest.unsigned_dict(), self.config.owner_secret, manifest.owner_signature)
 
     def _idle(self) -> None:
         self.idle_iters += 1

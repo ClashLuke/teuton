@@ -1,8 +1,8 @@
-# Teuton v3
+# Teuton
 
-Teuton v3 is the subnet-ready version of Teuton: a bucket-native distributed
-training runtime with explicit roles for an owner orchestrator, miners, and a
-validator. The mainnet deployment lives on Bittensor **netuid 3 (Finney)**.
+Teuton is decentralized datacenter purpose built for wide web tensor operation (i.e. decentralized training). It exists for exactly one reason: to allow computation in the long tail of GPU compute overlooked and non-organized. By protocolizing this compute Teutons plans to become the largest AI datacenter on earth.
+
+Teuton is purpose build for bucket-native distributed training with explicit roles for an owner orchestrator, miners, and a validator. The mainnet deployment lives on Bittensor **netuid 3 (Finney)**.
 
 The current v3 implementation supports:
 
@@ -97,17 +97,19 @@ corrupt miner receives score and weight `0.0`.
 
 ## Shared Bucket Mode
 
-The CLI reads bucket credentials from flags or environment variables:
+The CLI reads the bucket location from flags or environment variables:
 
 ```bash
 export S3_BUCKET=...
 export S3_REGION=us-east-1
-export AWS_ACCESS_KEY_ID=...
-export AWS_SECRET_ACCESS_KEY=...
 ```
 
-Secrets should come from Doppler or your environment. Do not commit `.env`
-files.
+Owner-operated processes such as the orchestrator, validator, and dashboard
+also need AWS credentials so they can write manifests, mint presigned grants,
+and verify results. Third-party miners should not need S3 keys: they use
+anonymous access to the public bucket metadata plus encrypted per-job presigned
+URLs. Secrets should come from Doppler or your environment. Do not commit
+`.env` files.
 
 ## Docker Deployment
 
@@ -118,14 +120,14 @@ each role:
 $DOCKER_USER/teuton:miner      docker/compose.miner.yml
 $DOCKER_USER/teuton:miner      docker/compose.multi-miner.yml   (multi-GPU host)
 $DOCKER_USER/teuton:validator  docker/compose.validator.yml
-$DOCKER_USER/teuton:auditor    docker/compose.auditor.yml
 $DOCKER_USER/teuton:miner      docker/compose.dashboard.yml     (public dashboard via Cloudflare Tunnel)
 ```
 
 Watchtower (included in each stack) polls Docker Hub every 60 s, so a
 `scripts/build_push.sh --run-id <id>` from the operator side rolls the whole
 fleet onto a new image and run id without touching any host. Miners only need
-to populate `/root/teuton/.env` and the wallet hotkeys once; see the
+to mount their Bittensor wallet and set `MINER_COLDKEY` / `MINER_HOTKEY` once;
+see the
 [Mining Guide](docs/mining.md) for the full step-by-step.
 
 ## Docs

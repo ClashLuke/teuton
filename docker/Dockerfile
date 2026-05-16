@@ -56,7 +56,31 @@ ENV TEUTON_GIT_SHA=$GIT_SHA \
 ARG TEUTON_RUN_ID=""
 ENV TEUTON_BAKED_RUN_ID=$TEUTON_RUN_ID
 
-LABEL org.opencontainers.image.source="https://github.com/unarbos/tueton" \
+# Public fleet defaults. These are safe to bake into public miner images:
+# they identify where the miner should look and which protocol defaults to use.
+# Secrets and per-miner hotkeys stay runtime-only.
+ARG S3_BUCKET=""
+ARG S3_REGION="us-east-1"
+ARG S3_ENDPOINT_URL=""
+ARG TEUTON_NETUID="3"
+ARG BT_NETWORK="finney"
+ARG TEUTON_GRANT_MODE="presigned"
+ARG TEUTON_ASSIGNMENT_CRYPTO="ed25519"
+ARG TEUTON_DISCOVERY_BACKEND="bucket"
+ARG TEUTON_MINER_POLL_INTERVAL="0.5"
+ARG TEUTON_OWNER_HOTKEY=""
+ENV TEUTON_BAKED_S3_BUCKET=$S3_BUCKET \
+    TEUTON_BAKED_S3_REGION=$S3_REGION \
+    TEUTON_BAKED_S3_ENDPOINT_URL=$S3_ENDPOINT_URL \
+    TEUTON_BAKED_NETUID=$TEUTON_NETUID \
+    TEUTON_BAKED_BT_NETWORK=$BT_NETWORK \
+    TEUTON_BAKED_GRANT_MODE=$TEUTON_GRANT_MODE \
+    TEUTON_BAKED_ASSIGNMENT_CRYPTO=$TEUTON_ASSIGNMENT_CRYPTO \
+    TEUTON_BAKED_DISCOVERY_BACKEND=$TEUTON_DISCOVERY_BACKEND \
+    TEUTON_BAKED_MINER_POLL_INTERVAL=$TEUTON_MINER_POLL_INTERVAL \
+    TEUTON_BAKED_OWNER_HOTKEY=$TEUTON_OWNER_HOTKEY
+
+LABEL org.opencontainers.image.source="https://github.com/unarbos/teuton" \
       org.opencontainers.image.description="Teuton v3 unified runtime image"
 
 ENTRYPOINT ["/entrypoint.sh"]

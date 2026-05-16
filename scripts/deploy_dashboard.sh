@@ -19,6 +19,8 @@
 #   TEUTON_NETUID               (default 3)
 #
 # Optional:
+#   TEUTON_RUN_ID          (optional; when empty, dashboard auto-selects the
+#                           latest run discovered in the bucket)
 #   --tunnel-name NAME    (default: teuton-dashboard)
 #   --no-proxy            (grey-cloud DNS instead of orange-cloud)
 #   --skip-cloudflare     (reuse the TEUTON_DASHBOARD_TUNNEL_TOKEN already set)
@@ -108,6 +110,56 @@ if [ -z "${TEUTON_DASHBOARD_TUNNEL_TOKEN:-}" ]; then
     exit 1
 fi
 
+TEUTON_RUN_ID="${TEUTON_RUN_ID:-}"
+export TEUTON_RUN_ID
+if [ -z "$TEUTON_RUN_ID" ]; then
+    echo "[deploy_dashboard] TEUTON_RUN_ID empty; dashboard will auto-select latest bucket run"
+else
+    echo "[deploy_dashboard] pinning dashboard to TEUTON_RUN_ID=$TEUTON_RUN_ID"
+fi
+
+# During the Locus -> Teuton rename the live fleet data can still reside in
+# the original bucket. Prefer an existing bucket so the dashboard never boots
+# into a NoSuchBucket blank page just because the env name moved ahead of the
+# S3 migration.
+if [ -n "${S3_BUCKET:-}" ]; then
+    RESOLVED_S3_BUCKET="$(
+        python - <<'PY'
+import os
+
+import boto3
+from botocore.exceptions import ClientError
+
+current = os.environ.get("S3_BUCKET", "")
+fallback = os.environ.get("TEUTON_DASHBOARD_FALLBACK_BUCKET", "locus-decentralized-training-797648826017")
+region = os.environ.get("S3_REGION", "us-east-1")
+s3 = boto3.client(
+    "s3",
+    region_name=region,
+    aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+    endpoint_url=os.environ.get("S3_ENDPOINT_URL") or None,
+)
+
+def exists(name: str) -> bool:
+    if not name:
+        return False
+    try:
+        s3.head_bucket(Bucket=name)
+        return True
+    except ClientError:
+        return False
+
+print(current if exists(current) or not exists(fallback) else fallback)
+PY
+    )"
+    if [ -n "$RESOLVED_S3_BUCKET" ] && [ "$RESOLVED_S3_BUCKET" != "$S3_BUCKET" ]; then
+        echo "[deploy_dashboard] S3_BUCKET=$S3_BUCKET does not exist; using $RESOLVED_S3_BUCKET"
+        S3_BUCKET="$RESOLVED_S3_BUCKET"
+        export S3_BUCKET
+    fi
+fi
+
 SSH_OPTS=(
     -o StrictHostKeyChecking=accept-new
     -o UserKnownHostsFile=/dev/null
@@ -143,11 +195,15 @@ S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-}
 AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
 TEUTON_NETUID=${TEUTON_NETUID:-3}
+TEUTON_RUN_ID=$TEUTON_RUN_ID
 TEUTON_DASHBOARD_TUNNEL_TOKEN=$TEUTON_DASHBOARD_TUNNEL_TOKEN
 TEUTON_DASHBOARD_REFRESH_SEC=${TEUTON_DASHBOARD_REFRESH_SEC:-3.0}
-TEUTON_DASHBOARD_CACHE_SEC=${TEUTON_DASHBOARD_CACHE_SEC:-1.5}
 TEUTON_DASHBOARD_MAX_JOBS=${TEUTON_DASHBOARD_MAX_JOBS:-500}
 TEUTON_DASHBOARD_MAX_ARTIFACTS=${TEUTON_DASHBOARD_MAX_ARTIFACTS:-300}
+TEUTON_DASHBOARD_DB_PATH=${TEUTON_DASHBOARD_DB_PATH:-/var/lib/teuton-dashboard/dashboard.sqlite3}
+TEUTON_DASHBOARD_BUCKET_POLL_SEC=${TEUTON_DASHBOARD_BUCKET_POLL_SEC:-5.0}
+TEUTON_DASHBOARD_CHAIN_POLL_SEC=${TEUTON_DASHBOARD_CHAIN_POLL_SEC:-30.0}
+BT_NETWORK=${BT_NETWORK:-finney}
 EOF
 
 scp "${SCP_OPTS[@]}" \

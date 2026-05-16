@@ -6,6 +6,7 @@ import os
 import time
 from dataclasses import asdict, dataclass, field
 
+from teuton_core.signatures import NativeEd25519HotkeySigner
 from teuton_core.telemetry import TelemetryWriter
 from teuton_runtime.storage import ObjectStore
 from .subnet import BittensorAdapter, WeightUpdate
@@ -28,6 +29,7 @@ class ValidatorNeuronConfig:
     encryption_secret: str = "teuton-dev-encryption"
     timelock_provider: object | None = None
     dry_run_weights: bool = True
+    wallet_path: str = "~/.bittensor/wallets"
     wallet_name: str | None = None
     hotkey_name: str | None = None
     network: str | None = None
@@ -39,6 +41,15 @@ class ValidatorNeuron:
     def __init__(self, *, bucket: ObjectStore, config: ValidatorNeuronConfig) -> None:
         self.bucket = bucket
         self.config = config
+        validator_signer = None
+        if config.wallet_name and config.hotkey_name:
+            validator_signer = NativeEd25519HotkeySigner.from_wallet(
+                wallet_path=config.wallet_path,
+                wallet_name=config.wallet_name,
+                hotkey_name=config.hotkey_name,
+            )
+            if config.validator_hotkey and validator_signer.identity != config.validator_hotkey:
+                raise ValueError("validator hotkey file does not match configured validator_hotkey")
         self.verifier = ReplayVerifier(
             bucket=bucket,
             config=ValidatorConfig(
@@ -46,7 +57,9 @@ class ValidatorNeuron:
                 run_id=config.run_id,
                 validator_hotkey=config.validator_hotkey,
                 validator_secret=config.validator_secret,
+                validator_signer=validator_signer,
                 owner_secret=config.owner_secret,
+                owner_hotkey=config.validator_hotkey if validator_signer is not None else "",
                 miner_secret=config.miner_secret,
                 device=config.device,
                 sample_rate=config.sample_rate,
@@ -85,6 +98,7 @@ class ValidatorNeuron:
             run_id=self.config.run_id,
             window_id=f"run={self.config.run_id}",
             validator_secret=self.config.validator_secret,
+            validator_hotkey=self.config.validator_hotkey,
         )
         scores = {hotkey: window.score for hotkey, window in windows.items()}
         score_seconds = time.time() - t1
