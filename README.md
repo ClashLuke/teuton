@@ -2,17 +2,42 @@
 
 Locus v3 is the subnet-ready version of Locus: a bucket-native distributed
 training runtime with explicit roles for an owner orchestrator, miners, and a
-validator.
+validator. The mainnet deployment lives on Bittensor **netuid 3 (Finney)**.
 
 The current v3 implementation supports:
 
 - signed v3 job manifests, miner receipts, and validator verdicts
 - hotkey-scoped miner workers, with one worker process per GPU
 - local/no-chain smoke tests
-- shared-bucket fleet runs
+- shared-bucket fleet runs with encrypted assignment grants
+- ED25519 hotkeys with per-job presigned S3 URLs
 - replay validation and compute-unit scoring
 - dry-run or real Bittensor `set_weights` adapter
 - round-style MLP jobs and a v3-native streaming bridge for `gpt_pipe`
+- a live discovery UI for inspecting active workers and receipts
+
+## Run A Miner
+
+If you came here to contribute compute on netuid 3, jump straight to the
+**[Mining Guide](docs/mining.md)** — it covers wallet creation, ED25519 hotkey
+generation, on-chain registration, and starting the prebuilt
+`locus:miner` Docker image.
+
+## Dashboard
+
+Live fleet view (active workers, runs, recent receipts) is hosted at
+**<https://dashboard.teutonic.ai>** — anyone can watch the network in real
+time.
+
+To run a local copy against the same bucket:
+
+```bash
+locus-v3 discovery-ui --netuid 3 --port 8765 --open-browser
+```
+
+The public site is the same UI, fronted by a Cloudflare Tunnel. See the
+[Dashboard Deployment](docs/dashboard.md) doc for the compose stack and the
+one-shot `scripts/deploy_dashboard.sh` provisioner.
 
 ## Install
 
@@ -84,9 +109,31 @@ export AWS_SECRET_ACCESS_KEY=...
 Secrets should come from Doppler or your environment. Do not commit `.env`
 files.
 
+## Docker Deployment
+
+The repo ships a single image with three role tags, plus compose stacks for
+each role:
+
+```text
+$DOCKER_USER/locus:miner      docker/compose.miner.yml
+$DOCKER_USER/locus:miner      docker/compose.multi-miner.yml   (multi-GPU host)
+$DOCKER_USER/locus:validator  docker/compose.validator.yml
+$DOCKER_USER/locus:auditor    docker/compose.auditor.yml
+$DOCKER_USER/locus:miner      docker/compose.dashboard.yml     (public dashboard via Cloudflare Tunnel)
+```
+
+Watchtower (included in each stack) polls Docker Hub every 60 s, so a
+`scripts/build_push.sh --run-id <id>` from the operator side rolls the whole
+fleet onto a new image and run id without touching any host. Miners only need
+to populate `/root/locus/.env` and the wallet hotkeys once; see the
+[Mining Guide](docs/mining.md) for the full step-by-step.
+
 ## Docs
 
-- [Mining](docs/mining.md)
+- [Mining](docs/mining.md) — generate keys, register on netuid 3, run the
+  miner stack
+- [Dashboard Deployment](docs/dashboard.md) — host the discovery UI on a
+  public hostname via Cloudflare Tunnel
 - [Running the Validator](docs/validator.md)
 - [SDK Usage](docs/sdk.md)
 - [V2 Architecture Preserved In V3](docs/v2-architecture.md)

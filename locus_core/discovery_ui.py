@@ -343,9 +343,12 @@ var POLL_MS = __REFRESH_MS__;
 var JOB_STATUS_FILTERS = [
     { id: "all", label: "All" },
     { id: "created", label: "Created" },
+    { id: "running", label: "Running" },
+    { id: "outputs_written", label: "Outputs" },
     { id: "completed", label: "Completed" },
+    { id: "verified", label: "Verified" },
     { id: "failed", label: "Failed" },
-    { id: "verified", label: "Verified" }
+    { id: "stale", label: "Stale" }
 ];
 var MINER_STATUS_FILTERS = [
     { id: "all", label: "All" },
@@ -356,13 +359,32 @@ var MINER_STATUS_FILTERS = [
 ];
 var DEFAULT_JOBS_FILTER = "all";
 var DEFAULT_MINERS_FILTER = "all";
+
+(function maybeResetFilters() {
+    try {
+        var params = new URLSearchParams(window.location.search);
+        if (params.get("reset") === "1") {
+            localStorage.removeItem("jobsFilter");
+            localStorage.removeItem("minersFilter");
+        }
+    } catch (e) {}
+})();
+
+function _validFilter(stored, valid, fallback) {
+    if (!stored) return fallback;
+    for (var i = 0; i < valid.length; i++) {
+        if (valid[i].id === stored) return stored;
+    }
+    return fallback;
+}
+
 var COMPUTE_WINDOW_SEC = 30 * 60;
 var COMPUTE_BIN_SEC = 30;
 var COMPUTE_BINS = COMPUTE_WINDOW_SEC / COMPUTE_BIN_SEC;
 var state = {
     snapshot: null,
-    jobsFilter: localStorage.getItem("jobsFilter") || DEFAULT_JOBS_FILTER,
-    minersFilter: localStorage.getItem("minersFilter") || DEFAULT_MINERS_FILTER,
+    jobsFilter: _validFilter(localStorage.getItem("jobsFilter"), JOB_STATUS_FILTERS, DEFAULT_JOBS_FILTER),
+    minersFilter: _validFilter(localStorage.getItem("minersFilter"), MINER_STATUS_FILTERS, DEFAULT_MINERS_FILTER),
     computeRates: null,
     computeNowUnix: 0
 };

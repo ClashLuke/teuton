@@ -156,4 +156,46 @@ def run_prefixes(netuid: int, run_id: str) -> list[str]:
         receipts_prefix(netuid, run_id),
         verdicts_prefix(netuid, run_id),
         audit_root(netuid, run_id) + "/",
+        telemetry_run_prefix(netuid, run_id),
     ]
+
+
+# -------------------------------------------------------------------
+# Telemetry layout (v3/netuid=N/telemetry/<run_id>/<stream>/<unix>.json)
+#
+# Operator-facing observability stream. Components emit small JSON
+# blobs here on top of the existing protocol objects. Readers tail the
+# prefix by sorting by LastModified.
+# -------------------------------------------------------------------
+
+
+def telemetry_run_prefix(netuid: int, run_id: str) -> str:
+    return f"{root(netuid)}/telemetry/{run_id}/"
+
+
+def telemetry_stream_prefix(netuid: int, run_id: str, stream: str) -> str:
+    return f"{telemetry_run_prefix(netuid, run_id)}{stream}/"
+
+
+def telemetry_event_key(netuid: int, run_id: str, stream: str, when_unix: int) -> str:
+    return f"{telemetry_stream_prefix(netuid, run_id, stream)}{int(when_unix):010d}.json"
+
+
+def telemetry_chain_key(netuid: int, run_id: str, when_unix: int) -> str:
+    return telemetry_event_key(netuid, run_id, "chain", when_unix)
+
+
+def telemetry_scores_key(netuid: int, run_id: str, when_unix: int) -> str:
+    return telemetry_event_key(netuid, run_id, "scores", when_unix)
+
+
+def telemetry_audits_key(netuid: int, run_id: str, when_unix: int) -> str:
+    return telemetry_event_key(netuid, run_id, "audits", when_unix)
+
+
+def telemetry_orchestrator_key(netuid: int, run_id: str, when_unix: int) -> str:
+    return telemetry_event_key(netuid, run_id, "orchestrator", when_unix)
+
+
+def telemetry_monitor_key(netuid: int, run_id: str, when_unix: int) -> str:
+    return telemetry_event_key(netuid, run_id, "monitor", when_unix)
