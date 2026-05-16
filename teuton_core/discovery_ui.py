@@ -32,7 +32,7 @@ INDEX_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
 <title>Teutonic</title>
-<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="icon" type="image/png" href="/teutonic.png">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
 
@@ -108,16 +108,16 @@ body {
 table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 12px;
+    font-size: 11px;
     table-layout: fixed;
 }
 th {
     text-transform: uppercase;
     font-weight: 600;
-    font-size: 11px;
+    font-size: 10px;
     letter-spacing: 0.04em;
     text-align: left;
-    padding: 4px 0;
+    padding: 3px 6px 3px 0;
     border-bottom: var(--border);
     background: var(--paper);
     position: sticky;
@@ -125,7 +125,7 @@ th {
     z-index: 1;
 }
 td {
-    padding: 3px 0;
+    padding: 2px 6px 2px 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -138,6 +138,24 @@ tr:hover td {
 }
 th:last-child, td:last-child { text-align: right; }
 code { font-family: var(--mono); }
+
+.miners-table, .jobs-table { min-width: 0; }
+.miners-table th:nth-child(1), .miners-table td:nth-child(1),
+.jobs-table th:nth-child(1), .jobs-table td:nth-child(1) { width: 4%; }
+.miners-table th:nth-child(2), .miners-table td:nth-child(2) { width: 9%; }
+.miners-table th:nth-child(3), .miners-table td:nth-child(3) { width: 20%; }
+.miners-table th:nth-child(4), .miners-table td:nth-child(4) { width: 18%; }
+.miners-table th:nth-child(5), .miners-table td:nth-child(5) { width: 7%; text-align: right; }
+.miners-table th:nth-child(6), .miners-table td:nth-child(6) { width: 10%; text-align: right; }
+.miners-table th:nth-child(7), .miners-table td:nth-child(7) { width: 8%; text-align: right; }
+.miners-table th:nth-child(8), .miners-table td:nth-child(8) { width: 8%; text-align: right; }
+.miners-table th:nth-child(9), .miners-table td:nth-child(9) { width: 8%; text-align: right; }
+.jobs-table th:nth-child(2), .jobs-table td:nth-child(2) { width: 18%; }
+.jobs-table th:nth-child(3), .jobs-table td:nth-child(3) { width: 14%; }
+.jobs-table th:nth-child(4), .jobs-table td:nth-child(4) { width: 10%; }
+.jobs-table th:nth-child(5), .jobs-table td:nth-child(5) { width: 15%; text-align: right; }
+.jobs-table th:nth-child(6), .jobs-table td:nth-child(6) { width: 11%; text-align: right; }
+.jobs-table th:nth-child(7), .jobs-table td:nth-child(7) { width: 28%; text-align: right; }
 
 #theme-toggle {
     background: none;
@@ -202,14 +220,23 @@ code { font-family: var(--mono); }
 .compute-line {
     fill: none;
     stroke: var(--ink);
-    stroke-width: 1.25;
+    stroke-width: 1.6;
+    vector-effect: non-scaling-stroke;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+}
+.compute-line-raw {
+    fill: none;
+    stroke: var(--ink);
+    stroke-width: 0.8;
+    opacity: 0.25;
     vector-effect: non-scaling-stroke;
     stroke-linejoin: round;
     stroke-linecap: round;
 }
 .compute-area {
     fill: var(--ink);
-    opacity: 0.06;
+    opacity: 0.05;
 }
 .compute-baseline {
     stroke: var(--ink);
@@ -250,11 +277,35 @@ code { font-family: var(--mono); }
     z-index: 2;
     color: var(--ink);
 }
+.graph-label {
+    align-items: center;
+}
+.metric-tabs {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+.metric-tab {
+    background: none;
+    border: var(--border);
+    color: var(--ink);
+    font: 600 10px/1 var(--font);
+    text-transform: uppercase;
+    padding: 3px 8px;
+    cursor: pointer;
+    letter-spacing: 0.05em;
+}
+.metric-tab:hover { background: var(--ink); color: var(--ink-inv); }
+.metric-tab.active { background: var(--ink); color: var(--ink-inv); }
 
 @media (max-width: 640px) {
     .page { padding: 16px 12px; gap: 16px; }
     #top-bar { font-size: 11px !important; }
-    .scroll-box table { table-layout: auto; min-width: 700px; }
+    .scroll-box table { min-width: 520px; }
+}
+@media (max-width: 1100px) {
+    .page { padding: 20px 22px; }
 }
 </style>
 </head>
@@ -266,7 +317,7 @@ code { font-family: var(--mono); }
     </div>
 
     <div class="hero" style="text-align:center;margin-bottom:8px;">
-        <img src="/favicon.png" alt="Teutonic" class="logo-img" style="width:80px;height:80px;margin-bottom:8px;">
+        <img src="/teutonic.png" alt="Teutonic" class="logo-img" style="width:80px;height:80px;margin-bottom:8px;">
         <div class="header-title" style="font-size:20px;font-weight:bold;letter-spacing:0.1em;text-transform:uppercase;">Teutonic</div>
         <div style="font-size:11px;margin-top:4px;display:flex;flex-direction:column;align-items:center;gap:4px;text-transform:uppercase;opacity:0.75;">
             <span id="hero-meta">--</span>
@@ -276,8 +327,9 @@ code { font-family: var(--mono); }
     <div id="error" style="display:none"></div>
 
     <div>
-        <div class="section-label">
-            <span>Compute</span>
+        <div class="section-label graph-label">
+            <span id="graph-title">Metrics</span>
+            <div class="metric-tabs" id="graph-tabs"></div>
             <span class="count" id="compute-rate">--</span>
         </div>
         <div id="compute-chart-wrap">
@@ -296,17 +348,17 @@ code { font-family: var(--mono); }
         </div>
         <div class="filter-bar" id="miners-filter"></div>
         <div class="scroll-box">
-            <table>
+            <table class="data-table miners-table">
                 <thead><tr>
                     <th style="width:36px">#</th>
-                    <th style="width:90px">Status</th>
-                    <th>Miner</th>
-                    <th>Host</th>
-                    <th>Worker</th>
+                    <th style="width:90px" data-miner-sort="status">Status</th>
+                    <th data-miner-sort="identity">M/H/W</th>
                     <th style="width:110px">GPU</th>
-                    <th style="width:60px;text-align:right">Jobs</th>
-                    <th style="width:70px;text-align:right">Receipts</th>
-                    <th style="width:110px">Last seen</th>
+                    <th style="width:60px;text-align:right" data-miner-sort="uid">UID</th>
+                    <th style="width:90px;text-align:right" data-miner-sort="emission">Emit</th>
+                    <th style="width:60px;text-align:right" data-miner-sort="jobs">Jobs</th>
+                    <th style="width:70px;text-align:right" data-miner-sort="receipts">Rcpts</th>
+                    <th style="width:80px;text-align:right" data-miner-sort="ping">Ping</th>
                 </tr></thead>
                 <tbody id="miners"></tbody>
             </table>
@@ -320,17 +372,15 @@ code { font-family: var(--mono); }
         </div>
         <div class="filter-bar" id="jobs-filter"></div>
         <div class="scroll-box">
-            <table>
+            <table class="data-table jobs-table">
                 <thead><tr>
                     <th style="width:36px">#</th>
                     <th style="width:140px">Kind</th>
                     <th style="width:120px">Status</th>
                     <th>Worker</th>
                     <th style="width:90px">Created</th>
-                    <th style="width:90px">Duration</th>
                     <th style="width:90px;text-align:right">Points</th>
-                    <th style="width:160px">IO (read/write)</th>
-                    <th style="width:90px">Verdict</th>
+                    <th style="width:160px">I/O</th>
                 </tr></thead>
                 <tbody id="jobs"></tbody>
             </table>
@@ -342,10 +392,6 @@ code { font-family: var(--mono); }
 <script>
 var POLL_MS = __REFRESH_MS__;
 var JOB_STATUS_FILTERS = [
-    { id: "all", label: "All" },
-    { id: "created", label: "Created" },
-    { id: "running", label: "Running" },
-    { id: "outputs_written", label: "Outputs" },
     { id: "completed", label: "Completed" },
     { id: "verified", label: "Verified" },
     { id: "failed", label: "Failed" },
@@ -354,12 +400,17 @@ var JOB_STATUS_FILTERS = [
 var MINER_STATUS_FILTERS = [
     { id: "all", label: "All" },
     { id: "live", label: "Live" },
-    { id: "stale", label: "Stale" },
-    { id: "seen", label: "Seen" },
-    { id: "assigned", label: "Assigned" }
+    { id: "stale", label: "Stale" }
 ];
-var DEFAULT_JOBS_FILTER = "all";
+var GRAPH_METRICS = [
+    { id: "compute", label: "Compute", unit: "CU/s", empty: "Awaiting first compute receipt" },
+    { id: "bandwidth", label: "Bandwidth", unit: "B/s", empty: "Awaiting first I/O receipt" },
+    { id: "jobs", label: "Jobs", unit: "jobs/s", empty: "Awaiting first completed job" },
+    { id: "latency", label: "Latency", unit: "avg", empty: "Awaiting first timed job" }
+];
+var DEFAULT_JOBS_FILTER = "completed";
 var DEFAULT_MINERS_FILTER = "all";
+var DEFAULT_GRAPH_METRIC = "compute";
 
 (function maybeResetFilters() {
     try {
@@ -367,6 +418,7 @@ var DEFAULT_MINERS_FILTER = "all";
         if (params.get("reset") === "1") {
             localStorage.removeItem("jobsFilter");
             localStorage.removeItem("minersFilter");
+            localStorage.removeItem("graphMetric");
         }
     } catch (e) {}
 })();
@@ -386,7 +438,11 @@ var state = {
     snapshot: null,
     jobsFilter: _validFilter(localStorage.getItem("jobsFilter"), JOB_STATUS_FILTERS, DEFAULT_JOBS_FILTER),
     minersFilter: _validFilter(localStorage.getItem("minersFilter"), MINER_STATUS_FILTERS, DEFAULT_MINERS_FILTER),
+    graphMetric: _validFilter(localStorage.getItem("graphMetric"), GRAPH_METRICS, DEFAULT_GRAPH_METRIC),
+    minersSort: { key: localStorage.getItem("minersSortKey") || "emission", dir: localStorage.getItem("minersSortDir") || "desc" },
     computeRates: null,
+    graphRawRates: null,
+    graphMetricDef: null,
     computeNowUnix: 0
 };
 
@@ -407,6 +463,11 @@ function short(s, n) {
     return s.length > n ? s.slice(0, n) + "\u2026" : s;
 }
 
+function trim5(s) {
+    if (!s) return "--";
+    return String(s).slice(0, 5);
+}
+
 function fmtBytes(n) {
     n = Number(n || 0);
     if (n < 1024) return n + " B";
@@ -415,11 +476,33 @@ function fmtBytes(n) {
     return (n / 1024 / 1024 / 1024).toFixed(2) + " GB";
 }
 
+function fmtDurationSec(n) {
+    n = Number(n);
+    if (!isFinite(n) || n < 0) return "--";
+    if (n < 1) return Math.round(n * 1000) + "ms";
+    if (n < 60) return (n < 10 ? n.toFixed(1) : Math.round(n)) + "s";
+
+    var total = Math.round(n);
+    var days = Math.floor(total / 86400);
+    total -= days * 86400;
+    var hours = Math.floor(total / 3600);
+    total -= hours * 3600;
+    var minutes = Math.floor(total / 60);
+    var seconds = total - minutes * 60;
+
+    if (days > 0) return days + "d" + (hours > 0 ? " " + hours + "h" : "");
+    if (hours > 0) return hours + "h" + (minutes > 0 ? " " + minutes + "m" : "");
+    return minutes + "m" + (seconds > 0 ? " " + seconds + "s" : "");
+}
+
+function fmtDurationMs(n) {
+    n = Number(n);
+    if (!isFinite(n) || n < 0) return "--";
+    return fmtDurationSec(n / 1000);
+}
+
 function fmtSec(n) {
-    n = Number(n || 0);
-    if (n < 1) return Math.round(n * 1000) + " ms";
-    if (n < 60) return n.toFixed(1) + " s";
-    return (n / 60).toFixed(1) + " m";
+    return fmtDurationSec(n);
 }
 
 function fmtPoints(n) {
@@ -476,33 +559,82 @@ function renderMiners() {
     var filtered = filter === "all" ? rows.slice() : rows.filter(function(r) {
         return (r.row.status || "live") === filter;
     });
+    filtered.sort(minerSortComparator(state.minersSort.key, state.minersSort.dir));
     document.getElementById("miners-count").textContent = filtered.length + " of " + rows.length;
     var body = document.getElementById("miners");
     if (!filtered.length) {
         body.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:16px">No miners match this filter.</td></tr>';
         return;
     }
+    renderMinerSortHeaders();
     body.innerHTML = filtered.map(function(item, i) {
         var w = item.row.worker || {};
         var cap = w.capabilities || {};
+        var chain = item.row.chain || (item.row.miner && item.row.miner.chain) || {};
         var gpu = cap.gpu_name || cap.gpu_class || (w.gpu_index != null ? "gpu" + w.gpu_index : "--");
         var status = item.row.status || "live";
         var pillCls = "status-pill status-" + status;
         var sources = (item.row.sources || []).join("+") || "";
         var ageVal = item.row.age_sec;
-        var ageStr = (ageVal == null) ? "--" : ageLabel(ageVal);
+        var pingMs = cap.rtt_to_bucket_ms;
+        var pingStr = (pingMs == null) ? "--" : fmtDurationMs(pingMs);
+        var identityTitle = [
+            "miner=" + (w.hotkey_ss58 || "--"),
+            "host=" + (w.host_id || "--"),
+            "worker=" + (w.worker_id || "--")
+        ].join(" ");
+        var identity = trim5(w.hotkey_ss58) + "/" + trim5(w.host_id) + "/" + trim5(w.worker_id);
         return '<tr>' +
             '<td>' + (i + 1) + '</td>' +
             '<td><span class="' + pillCls + '" title="' + esc(sources) + '">' + esc(status) + '</span></td>' +
-            '<td><code title="' + esc(w.hotkey_ss58 || "") + '">' + esc(short(w.hotkey_ss58, 18)) + '</code></td>' +
-            '<td><code>' + esc(w.host_id || "--") + '</code></td>' +
-            '<td><code>' + esc(w.worker_id || "--") + '</code></td>' +
+            '<td><code title="' + esc(identityTitle) + '">' + esc(identity) + '</code></td>' +
             '<td>' + esc(gpu) + '</td>' +
+            '<td style="text-align:right">' + esc(chain.uid == null ? "--" : chain.uid) + '</td>' +
+            '<td style="text-align:right" title="' + esc(chain.emission == null ? "" : chain.emission) + '">' + esc(chain.emission == null ? "--" : fmtPoints(chain.emission)) + '</td>' +
             '<td style="text-align:right">' + esc(item.row.n_jobs || 0) + '</td>' +
             '<td style="text-align:right">' + esc(item.row.n_receipts || 0) + '</td>' +
-            '<td>' + esc(ageStr) + '</td>' +
+            '<td style="text-align:right">' + esc(pingStr) + '</td>' +
             '</tr>';
     }).join("");
+}
+
+function minerSortValue(item, key) {
+    var w = item.row.worker || {};
+    var cap = w.capabilities || {};
+    var chain = item.row.chain || (item.row.miner && item.row.miner.chain) || {};
+    if (key === "status") return item.row.status || "";
+    if (key === "identity") return (w.hotkey_ss58 || "") + "/" + (w.host_id || "") + "/" + (w.worker_id || "");
+    if (key === "uid") return chain.uid == null ? -1 : Number(chain.uid);
+    if (key === "emission") return chain.emission == null ? -1 : Number(chain.emission);
+    if (key === "receipts") return Number(item.row.n_receipts || 0);
+    if (key === "ping") return cap.rtt_to_bucket_ms == null ? Number.POSITIVE_INFINITY : Number(cap.rtt_to_bucket_ms);
+    return Number(item.row.n_jobs || 0);
+}
+
+function minerSortComparator(key, dir) {
+    var factor = dir === "asc" ? 1 : -1;
+    return function(a, b) {
+        var av = minerSortValue(a, key);
+        var bv = minerSortValue(b, key);
+        if (typeof av === "number" && typeof bv === "number") {
+            if (av !== bv) return (av - bv) * factor;
+        } else {
+            var cmp = String(av).localeCompare(String(bv));
+            if (cmp !== 0) return cmp * factor;
+        }
+        return String(minerSortValue(a, "identity")).localeCompare(String(minerSortValue(b, "identity")));
+    };
+}
+
+function renderMinerSortHeaders() {
+    var headers = document.querySelectorAll("[data-miner-sort]");
+    for (var i = 0; i < headers.length; i++) {
+        var key = headers[i].getAttribute("data-miner-sort");
+        var label = headers[i].getAttribute("data-label") || headers[i].textContent.replace(/[▲▼]/g, "").trim();
+        headers[i].setAttribute("data-label", label);
+        headers[i].style.cursor = "pointer";
+        headers[i].textContent = label + (state.minersSort.key === key ? (state.minersSort.dir === "asc" ? " ▲" : " ▼") : "");
+    }
 }
 
 function renderJobsFilter(counts) {
@@ -515,56 +647,65 @@ function renderJobsFilter(counts) {
     }).join("");
 }
 
+function jobStatusClass(status) {
+    var cls = "status-pill ";
+    if (status === "completed" || status === "verified") return cls + "status-live";
+    if (status === "failed" || status === "stale") return cls + "status-stale";
+    return cls + "status-assigned";
+}
+
 function renderJobs() {
     var jobs = (state.snapshot && state.snapshot.jobs) || [];
     var counts = {};
     JOB_STATUS_FILTERS.forEach(function(f) { counts[f.id] = 0; });
-    counts.all = jobs.length;
     for (var k = 0; k < jobs.length; k++) {
         var s = jobs[k].status;
         if (counts[s] !== undefined) counts[s] += 1;
     }
     renderJobsFilter(counts);
     var filter = state.jobsFilter;
-    var filtered = filter === "all" ? jobs.slice() : jobs.filter(function(j) { return j.status === filter; });
+    var filtered = jobs.filter(function(j) { return j.status === filter; });
     document.getElementById("jobs-count").textContent = filtered.length + " of " + jobs.length + " jobs";
     var body = document.getElementById("jobs");
     if (!filtered.length) {
-        var emptyLabel = filter === "all" ? "" : esc(filter) + " ";
-        body.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:16px">No ' + emptyLabel + 'jobs in this run.</td></tr>';
+        var emptyLabel = esc(filter) + " ";
+        body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:16px">No ' + emptyLabel + 'jobs in this run.</td></tr>';
         return;
     }
     var ordered = filtered.slice().sort(function(a, b) { return (b.created_unix || 0) - (a.created_unix || 0); });
     var nowUnix = (state.snapshot && state.snapshot.meta && state.snapshot.meta.generated_unix) || (Date.now() / 1000);
     body.innerHTML = ordered.map(function(j, i) {
-        var verdict = (j.verdicts || [])[0];
-        var verdictStatus = verdict ? verdict.status : (j.status === "failed" ? "fail" : "--");
-        var verdictTitle = verdict && verdict.reason ? verdict.status + ": " + verdict.reason : verdictStatus;
         var createdAge = j.created_unix ? Math.max(0, nowUnix - j.created_unix) : null;
-        var createdLabel = createdAge != null ? ageLabel(createdAge) : "--";
+        var createdLabel = createdAge != null ? fmtDurationSec(createdAge) + " ago" : "--";
         var createdTitle = j.created_unix ? fmtTime(j.created_unix) : "";
         var io = fmtBytes(j.bytes_read) + " / " + fmtBytes(j.bytes_written);
         var ioTitle = "read " + fmtBytes(j.bytes_read) + " \u2192 wrote " + fmtBytes(j.bytes_written);
+        var worker = j.assigned_worker || j.assigned_hotkey || "--";
         return '<tr>' +
             '<td>' + (i + 1) + '</td>' +
+            '<td><span class="' + jobStatusClass(j.status) + '">' + esc(j.status) + '</span></td>' +
             '<td>' + esc(j.kind) + '</td>' +
-            '<td>' + esc(j.status) + '</td>' +
-            '<td><code>' + esc(j.assigned_worker || j.assigned_hotkey || "--") + '</code></td>' +
+            '<td><code title="' + esc(worker) + '">' + esc(trim5(worker)) + '</code></td>' +
             '<td title="' + esc(createdTitle) + '">' + esc(createdLabel) + '</td>' +
-            '<td>' + esc(fmtSec(j.duration_sec)) + '</td>' +
             '<td style="text-align:right" title="' + esc(Number(j.score_points || 0).toFixed(6) + " score points") + '">' + esc(fmtPoints(j.score_points)) + '</td>' +
             '<td title="' + esc(ioTitle) + '">' + esc(io) + '</td>' +
-            '<td title="' + esc(verdictTitle) + '">' + esc(verdictStatus) + '</td>' +
             '</tr>';
     }).join("");
 }
 
 function renderHero() {
     var meta = (state.snapshot && state.snapshot.meta) || {};
+    var health = meta.health || {};
+    var chain = health.chain || {};
+    var states = health.states || {};
     var parts = [];
     if (meta.netuid != null) parts.push("NETUID " + meta.netuid);
     if (meta.bucket) parts.push("BUCKET " + meta.bucket);
     if (meta.run_id) parts.push("RUN " + short(meta.run_id, 36));
+    if (meta.source) parts.push("SOURCE " + meta.source);
+    if (chain.current_block != null) parts.push("BLOCK " + chain.current_block);
+    if (states.bucket && states.bucket.updated_unix) parts.push("BUCKET SCAN " + ageLabel(Math.max(0, meta.generated_unix - states.bucket.updated_unix)));
+    if (states.chain && states.chain.updated_unix) parts.push("CHAIN SCAN " + ageLabel(Math.max(0, meta.generated_unix - states.chain.updated_unix)));
     var el = document.getElementById("hero-meta");
     if (el) el.textContent = parts.length ? parts.join(" \u00B7 ") : "--";
 }
@@ -576,36 +717,106 @@ function fmtCompute(n) {
     return n.toFixed(1);
 }
 
+function fmtMetricValue(metricId, n) {
+    n = Number(n || 0);
+    if (metricId === "bandwidth") return fmtBytes(n) + "/s";
+    if (metricId === "jobs") {
+        if (n >= 10) return n.toFixed(1) + " jobs/s";
+        if (n >= 1) return n.toFixed(2) + " jobs/s";
+        return n.toFixed(3) + " jobs/s";
+    }
+    if (metricId === "latency") return fmtDurationSec(n);
+    return fmtCompute(n) + " CU/s";
+}
+
+function fmtMetricTotal(metricId, total, count) {
+    total = Number(total || 0);
+    count = Number(count || 0);
+    if (metricId === "bandwidth") return fmtBytes(total) + " over 30m";
+    if (metricId === "jobs") return count + " jobs over 30m";
+    if (metricId === "latency") return count ? "avg " + fmtDurationSec(total / count) + " over 30m" : "avg -- over 30m";
+    return fmtCompute(total) + " CU over 30m";
+}
+
+function graphMetricDef() {
+    for (var i = 0; i < GRAPH_METRICS.length; i++) {
+        if (GRAPH_METRICS[i].id === state.graphMetric) return GRAPH_METRICS[i];
+    }
+    return GRAPH_METRICS[0];
+}
+
+function renderGraphTabs() {
+    var tabs = document.getElementById("graph-tabs");
+    if (!tabs) return;
+    tabs.innerHTML = GRAPH_METRICS.map(function(metric) {
+        var cls = "metric-tab" + (metric.id === state.graphMetric ? " active" : "");
+        return '<button type="button" class="' + cls + '" data-graph-metric="' + esc(metric.id) + '">' +
+            esc(metric.label) + '</button>';
+    }).join("");
+}
+
+function buildGraphSeries(jobs, nowUnix, metricId) {
+    var totals = new Array(COMPUTE_BINS);
+    var counts = new Array(COMPUTE_BINS);
+    for (var b = 0; b < COMPUTE_BINS; b++) {
+        totals[b] = 0;
+        counts[b] = 0;
+    }
+    var total = 0;
+    var count = 0;
+
+    for (var i = 0; i < jobs.length; i++) {
+        var j = jobs[i];
+        var finished = Number(j.finished_unix);
+        if (!finished) continue;
+        var ageSec = nowUnix - finished;
+        if (ageSec < 0 || ageSec >= COMPUTE_WINDOW_SEC) continue;
+        var idx = COMPUTE_BINS - 1 - Math.floor(ageSec / COMPUTE_BIN_SEC);
+        if (idx < 0 || idx >= COMPUTE_BINS) continue;
+
+        var value = 0;
+        if (metricId === "bandwidth") {
+            value = Number(j.bytes_read || 0) + Number(j.bytes_written || 0);
+        } else if (metricId === "jobs") {
+            value = 1;
+        } else if (metricId === "latency") {
+            value = Number(j.duration_sec || 0);
+        } else {
+            value = Number(j.compute_sec || 0);
+        }
+        if (!isFinite(value) || value <= 0) continue;
+        totals[idx] += value;
+        counts[idx] += 1;
+        total += value;
+        count += 1;
+    }
+
+    var rates = new Array(COMPUTE_BINS);
+    for (var k = 0; k < COMPUTE_BINS; k++) {
+        if (metricId === "latency") {
+            rates[k] = counts[k] ? totals[k] / counts[k] : 0;
+        } else {
+            rates[k] = totals[k] / COMPUTE_BIN_SEC;
+        }
+    }
+    return { rates: rates, total: total, count: count };
+}
+
 function renderCompute() {
+    renderGraphTabs();
     var svg = document.getElementById("compute-chart");
     if (!svg) return;
     var jobs = (state.snapshot && state.snapshot.jobs) || [];
     var meta = (state.snapshot && state.snapshot.meta) || {};
     var nowUnix = Number(meta.generated_unix) || (Date.now() / 1000);
-
-    var bins = new Array(COMPUTE_BINS);
-    for (var b = 0; b < COMPUTE_BINS; b++) bins[b] = 0;
-    var totalCompute = 0;
-
-    for (var i = 0; i < jobs.length; i++) {
-        var j = jobs[i];
-        var finished = Number(j.finished_unix);
-        var compute = Number(j.compute_sec);
-        if (!finished || !compute || compute <= 0) continue;
-        var ageSec = nowUnix - finished;
-        if (ageSec < 0 || ageSec >= COMPUTE_WINDOW_SEC) continue;
-        var idx = COMPUTE_BINS - 1 - Math.floor(ageSec / COMPUTE_BIN_SEC);
-        if (idx < 0 || idx >= COMPUTE_BINS) continue;
-        bins[idx] += compute;
-        totalCompute += compute;
-    }
-
-    var ratePerMinFactor = 60 / COMPUTE_BIN_SEC;
-    var rates = new Array(COMPUTE_BINS);
+    var metric = graphMetricDef();
+    var series = buildGraphSeries(jobs, nowUnix, metric.id);
+    var rates = series.rates;
+    var smoothRates = smoothSeries(rates, 5, 0.35);
     var maxRate = 0;
-    for (var k = 0; k < COMPUTE_BINS; k++) {
-        rates[k] = bins[k] * ratePerMinFactor;
-        if (rates[k] > maxRate) maxRate = rates[k];
+    for (var k2 = 0; k2 < COMPUTE_BINS; k2++) {
+        if (rates[k2] > maxRate) maxRate = rates[k2];
+        if (smoothRates[k2] > maxRate) maxRate = smoothRates[k2];
     }
 
     var W = 1000, H = 140, PAD_TOP = 12, PAD_BOTTOM = 14;
@@ -618,24 +829,28 @@ function renderCompute() {
         return PAD_TOP + INNER_H - (rate / maxRate) * INNER_H;
     }
 
+    var rawPts = [];
     var linePts = [];
     for (var p = 0; p < COMPUTE_BINS; p++) {
         var x = (p * stepX).toFixed(2);
-        var y = yFor(rates[p]).toFixed(2);
+        rawPts.push(x + "," + yFor(rates[p]).toFixed(2));
+        var y = yFor(smoothRates[p]).toFixed(2);
         linePts.push(x + "," + y);
     }
+    var rawLineStr = rawPts.join(" ");
     var lineStr = linePts.join(" ");
     var areaStr = "0," + baselineY + " " + lineStr + " " + W + "," + baselineY;
 
     var emptyEl = "";
-    if (totalCompute === 0) {
+    if (series.count === 0) {
         emptyEl = '<text class="compute-empty" x="500" y="' + (PAD_TOP + INNER_H / 2) +
-            '" text-anchor="middle">Awaiting first receipt</text>';
+            '" text-anchor="middle">' + esc(metric.empty) + '</text>';
     }
 
     svg.innerHTML =
         '<polygon class="compute-area" points="' + areaStr + '"/>' +
         '<line class="compute-baseline" x1="0" x2="' + W + '" y1="' + baselineY + '" y2="' + baselineY + '"/>' +
+        '<polyline class="compute-line-raw" points="' + rawLineStr + '"/>' +
         '<polyline class="compute-line" points="' + lineStr + '"/>' +
         '<line id="compute-cursor-line" class="compute-cursor" x1="0" x2="0" y1="' + PAD_TOP +
         '" y2="' + baselineY + '" style="display:none"/>' +
@@ -643,15 +858,36 @@ function renderCompute() {
 
     var rateBadge = document.getElementById("compute-rate");
     if (rateBadge) {
-        var lastRate = rates[rates.length - 1] || 0;
-        rateBadge.textContent = fmtCompute(lastRate) + " cs/min \u00B7 " + fmtCompute(totalCompute) + " cs over 30m";
+        var lastRate = smoothRates[smoothRates.length - 1] || 0;
+        rateBadge.textContent = fmtMetricValue(metric.id, lastRate) + " \u00B7 " + fmtMetricTotal(metric.id, series.total, series.count);
     }
 
     var ymax = document.getElementById("compute-y-max");
-    if (ymax) ymax.textContent = maxRate > 0 ? fmtCompute(maxRate) + " cs/min" : "";
+    if (ymax) ymax.textContent = maxRate > 0 ? fmtMetricValue(metric.id, maxRate) : "";
 
-    state.computeRates = rates;
+    state.computeRates = smoothRates;
+    state.graphRawRates = rates;
+    state.graphMetricDef = metric;
     state.computeNowUnix = nowUnix;
+}
+
+function smoothSeries(values, windowSize, alpha) {
+    var out = new Array(values.length);
+    var ema = 0;
+    for (var i = 0; i < values.length; i++) {
+        var start = Math.max(0, i - Math.floor(windowSize / 2));
+        var end = Math.min(values.length - 1, i + Math.floor(windowSize / 2));
+        var total = 0;
+        var n = 0;
+        for (var j = start; j <= end; j++) {
+            total += Number(values[j] || 0);
+            n += 1;
+        }
+        var ma = n ? total / n : 0;
+        ema = i === 0 ? ma : (alpha * ma + (1 - alpha) * ema);
+        out[i] = ema;
+    }
+    return out;
 }
 
 function attachComputeHover() {
@@ -687,7 +923,10 @@ function attachComputeHover() {
             cursor.style.display = "";
         }
 
-        tooltip.textContent = fmtTime(binStartUnix) + " \u00B7 " + fmtCompute(rate) + " cs/min";
+        var metric = state.graphMetricDef || graphMetricDef();
+        var raw = state.graphRawRates ? (state.graphRawRates[binIdx] || 0) : rate;
+        tooltip.textContent = fmtTime(binStartUnix) + " \u00B7 " + fmtMetricValue(metric.id, rate) +
+            " smoothed \u00B7 " + fmtMetricValue(metric.id, raw) + " raw";
         tooltip.style.display = "block";
         var tRect = tooltip.getBoundingClientRect();
         var wrapRect = wrap.getBoundingClientRect();
@@ -764,6 +1003,34 @@ document.getElementById("miners-filter").addEventListener("click", function(e) {
     renderMiners();
 });
 
+document.getElementById("graph-tabs").addEventListener("click", function(e) {
+    var btn = e.target.closest && e.target.closest("[data-graph-metric]");
+    if (!btn) return;
+    var next = btn.getAttribute("data-graph-metric");
+    if (!next || next === state.graphMetric) return;
+    state.graphMetric = next;
+    try { localStorage.setItem("graphMetric", next); } catch (_) {}
+    renderCompute();
+});
+
+document.querySelector("thead").addEventListener("click", function(e) {
+    var th = e.target.closest && e.target.closest("[data-miner-sort]");
+    if (!th) return;
+    var key = th.getAttribute("data-miner-sort");
+    if (!key) return;
+    if (state.minersSort.key === key) {
+        state.minersSort.dir = state.minersSort.dir === "asc" ? "desc" : "asc";
+    } else {
+        state.minersSort.key = key;
+        state.minersSort.dir = key === "ping" || key === "identity" || key === "status" ? "asc" : "desc";
+    }
+    try {
+        localStorage.setItem("minersSortKey", state.minersSort.key);
+        localStorage.setItem("minersSortDir", state.minersSort.dir);
+    } catch (_) {}
+    renderMiners();
+});
+
 renderJobsFilter({});
 renderMinersFilter({});
 renderCompute();
@@ -835,7 +1102,7 @@ def _handler(
             if parsed.path == "/":
                 self._send(HTTPStatus.OK, _index_html(refresh_sec).encode("utf-8"), "text/html; charset=utf-8")
                 return
-            if parsed.path == "/favicon.png" or parsed.path == "/favicon.ico":
+            if parsed.path in {"/teutonic.png", "/favicon.png", "/favicon.ico"}:
                 if logo_bytes:
                     self._send(HTTPStatus.OK, logo_bytes, "image/png")
                 else:
