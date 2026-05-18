@@ -13,6 +13,7 @@ from teuton_core.signatures import Signer
 from teuton_core.wallet_crypto import AssignmentEncryptor, DevAssignmentCrypto, Ed25519SealedBoxAssignmentCrypto
 from teuton_runtime.discovery import build_discovery_backend
 from teuton_runtime.grants import broker_for_mode, PresignedUrlBroker
+from teuton_runtime.compute_units import expected_compute_units_from_graph
 from teuton_runtime.queue import OrchestratorQueue, QueueEntry
 from teuton_runtime import tensor_io
 from teuton_runtime.storage import ObjectStore
@@ -80,6 +81,7 @@ class RunManager:
         )
         self.queue.reconcile_from_bucket()
         self.queue.start_background_flush()
+        self._at_cap_hotkeys: set[str] = set()
 
     def bootstrap(self) -> None:
         w0, w1 = self.task.initial_weights()
@@ -111,6 +113,7 @@ class RunManager:
         records = self.discovery.discover_workers()
         workers = [record.worker for record in records]
         self.quota.update_workers([record.miner for record in records], workers)
+        self.quota.reconcile_inflight_from_queue(self.queue.depth)
         return workers
 
     def run_loop(self, *, poll_interval: float = 0.05, timeout_sec: float = 60.0) -> None:
@@ -166,20 +169,41 @@ class RunManager:
         eval_job = self.emit_eval(step)
         self.wait_outputs(eval_job)
 
-    def _pick_worker(self, *, requirements: ResourceRequirements | None = None) -> WorkerIdentity:
+    def _pick_worker(
+        self,
+        *,
+        graph,
+        requirements: ResourceRequirements | None = None,
+    ) -> WorkerIdentity:
         """``QuotaBook.pick_worker`` with queue-depth backpressure applied.
 
         Skips hotkeys whose miner already has ``max_inflight_per_hotkey``
         outstanding queue entries so slow miners don't accumulate work.
         """
         max_inflight = self.config.max_inflight_per_hotkey
+        estimated_cu = expected_compute_units_from_graph(graph)
         return self.quota.pick_worker(
+            estimated_cu=estimated_cu,
             requirements=requirements,
             hotkey_filter=lambda hk: self.queue.depth(hk) < max_inflight,
         )
 
+    def _hotkeys_at_cap(self) -> set[str]:
+        cap = int(self.config.max_inflight_per_hotkey)
+        if cap <= 0:
+            return set()
+        hotkeys = {entry.assigned_hotkey for entry in self.queue}
+        return {hk for hk in hotkeys if self.queue.depth(hk) >= cap}
+
+    def _note_cap_release_flush(self) -> None:
+        current = self._hotkeys_at_cap()
+        released = self._at_cap_hotkeys - current
+        self._at_cap_hotkeys = current
+        if released:
+            self.queue.request_flush()
+
     def emit_forward(self, step: int) -> JobManifestV3:
-        worker = self._pick_worker()
+        worker = self._pick_worker(graph=self.graphs["forward"])
         outputs = [
             self.output_ref(name=f"target_{ub}", uri=self.bucket.uri_for_key(paths.target_key(self.config.netuid, self.config.run_id, step, ub)))
             for ub in range(self.task.N_UB)
@@ -191,7 +215,7 @@ class RunManager:
         return self.emit_job("forward_pass", step, self.graphs["forward"], {"round_id": step}, inputs, outputs, worker)
 
     def emit_inner(self, step: int, ub: int, replica: int) -> JobManifestV3:
-        worker = self._pick_worker()
+        worker = self._pick_worker(graph=self.graphs["inner"])
         job_id = f"step{step}-ub{ub}-inner-r{replica}"
         forward_job = self.load_job(f"step{step}-forward_pass")
         target_ref = forward_job.outputs[ub]
@@ -211,13 +235,13 @@ class RunManager:
         return self.emit_job("inner_step", step, self.graphs["inner"], {"ub": ub, "replica": replica}, inputs, outputs, worker, job_id=job_id)
 
     def emit_reduce(self, step: int, ub: int) -> JobManifestV3:
-        worker = self._pick_worker()
         deltas = []
         for jid in self.emitted:
             if f"step{step}-ub{ub}-inner" in jid:
                 manifest = self.load_job(jid)
                 deltas.extend(manifest.outputs)
         graph = self.task.build_reduce_graph(len(deltas))
+        worker = self._pick_worker(graph=graph)
         outputs = [
             ArtifactRef(
                 name="reduced",
@@ -229,7 +253,7 @@ class RunManager:
         return self.emit_job("reduce", step, graph, {"ub": ub, "n_inputs": len(inputs)}, inputs, outputs, worker, job_id=f"step{step}-ub{ub}-reduce")
 
     def emit_outer(self, step: int, ub: int) -> JobManifestV3:
-        worker = self._pick_worker()
+        worker = self._pick_worker(graph=self.graphs["outer"])
         reduce_job = self.load_job(f"step{step}-ub{ub}-reduce")
         inputs = [
             self.weight_ref(name="weights", step=step, ub=ub),
@@ -241,7 +265,7 @@ class RunManager:
         return self.emit_job("outer_step", step, self.graphs["outer"], {"ub": ub}, inputs, outputs, worker, job_id=f"step{step}-ub{ub}-outer")
 
     def emit_eval(self, step: int) -> JobManifestV3:
-        worker = self._pick_worker()
+        worker = self._pick_worker(graph=self.graphs["eval"])
         inputs = [
             self.weight_ref(name=f"weights_{ub}", step=step + 1, ub=ub)
             for ub in range(self.task.N_UB)
@@ -293,6 +317,8 @@ class RunManager:
         grant_uri = self.emit_assignment_grant(manifest)
         self.emitted.append(job_id)
         self.queue.add(QueueEntry.from_manifest(manifest, manifest_uri=manifest_uri, grant_uri=grant_uri))
+        self.queue.request_flush()
+        self._note_cap_release_flush()
         return manifest
 
     def load_job(self, job_id: str) -> JobManifestV3:
@@ -305,12 +331,14 @@ class RunManager:
         while time.time() < deadline:
             if all(self.bucket.exists(ref.uri) for ref in manifest.outputs):
                 self.quota.release(manifest.assigned_hotkey)
-                self.queue.remove(manifest.job_id)
+                if self.queue.remove(manifest.job_id):
+                    self._note_cap_release_flush()
                 return
             time.sleep(0.05)
         self.quota.release(manifest.assigned_hotkey)
         # Remove from queue so the per-hotkey budget releases even on timeout.
-        self.queue.remove(manifest.job_id)
+        if self.queue.remove(manifest.job_id):
+            self._note_cap_release_flush()
         self.bucket.put_json(
             self.bucket.uri_for_key(
                 f"{paths.jobs_prefix(self.config.netuid, self.config.run_id)}{manifest.job_id}/stale.json"

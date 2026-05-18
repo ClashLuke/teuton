@@ -1,6 +1,7 @@
 """Async indexer cycle tests against the LocalBucket fixture."""
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
@@ -17,7 +18,11 @@ async def test_bucket_indexer_populates_workers_and_receipts_table(app):
     )
     assert indexed >= 1
     workers = await db.query("SELECT * FROM workers WHERE netuid=?", (0,))
-    assert any(r["hotkey"] == "hk-a" for r in workers)
+    row = next(r for r in workers if r["hotkey"] == "hk-a")
+    assert row is not None
+    runtime = json.loads(row["runtime_json"] or "{}")
+    assert runtime["assigned_depth"] == 1
+    assert runtime["skipped"]["missing_grant"] == 2
 
 
 def test_queue_sampler_projection_includes_entries(app):

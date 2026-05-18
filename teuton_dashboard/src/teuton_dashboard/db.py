@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS workers (
     capabilities_json TEXT,
     miner_json TEXT,
     worker_json TEXT,
+    runtime_json TEXT,
     PRIMARY KEY (netuid, run_id, hotkey, worker_id, role)
 );
 CREATE TABLE IF NOT EXISTS receipts (
@@ -132,8 +133,12 @@ class DashboardDB:
                 cols = {row[1] for row in await cur.fetchall()}
                 if cols and "kind" not in cols:
                     await conn.execute("ALTER TABLE receipts ADD COLUMN kind TEXT")
+                cur = await conn.execute("PRAGMA table_info(workers)")
+                wcols = {row[1] for row in await cur.fetchall()}
+                if wcols and "runtime_json" not in wcols:
+                    await conn.execute("ALTER TABLE workers ADD COLUMN runtime_json TEXT")
             except Exception as exc:
-                LOG.debug("receipts kind probe failed: %r", exc)
+                LOG.debug("schema migration probe failed: %r", exc)
             await conn.executescript(_SCHEMA)
             await conn.commit()
 

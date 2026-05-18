@@ -12,6 +12,8 @@
     $: maxNet = cap > 0 ? cap * Math.max(minerCount, 1) : 0;
     $: atCap = snapshot?.at_cap_count ?? 0;
     $: backpressureFrac = minerCount > 0 ? atCap / minerCount : 0;
+    $: stuckSec = snapshot?.oldest_entry_age_sec ?? null;
+    $: stuckWarn = stuckSec != null && stuckSec > 120;
 
     function snapAge(snapshot_unix: number, now = Math.floor(Date.now() / 1000)): string {
         if (!snapshot_unix) return '--';
@@ -36,6 +38,19 @@
     {#if !snapshot}
         <p class="mono text-[11px] opacity-60 py-4 text-center uppercase">Awaiting first queue snapshot</p>
     {:else}
+        {#if backpressureFrac >= 0.5 && atCap > 0}
+            <p class="mono text-[11px] text-warn border dashed px-2 py-1 mb-2">
+                Backpressure: {atCap} of {minerCount} miners at inflight cap ({cap}/miner).
+            </p>
+        {/if}
+        {#if stuckWarn}
+            <p class="mono text-[11px] text-warn border dashed px-2 py-1 mb-2">
+                Oldest outstanding job is {fmtDurationSec(stuckSec)} old
+                {#if snapshot.oldest_job_id}
+                    ({shortHotkey(snapshot.oldest_job_id, 10, 8)}).
+                {/if}
+            </p>
+        {/if}
         <div class="flex flex-wrap gap-4 items-baseline border-b dotted-faint pb-2">
             <div>
                 <div class="mono text-[28px] leading-none tracking-wider">

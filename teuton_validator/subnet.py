@@ -66,14 +66,15 @@ class BittensorAdapter:
         normalized = self.normalize_scores(scores)
         if self.dry_run:
             ordered = sorted(normalized.items())
+            hotkeys = [h for h, _v in ordered]
             update = WeightUpdate(
                 uids=list(range(len(ordered))),
                 weights=[v for _h, v in ordered],
                 submitted=True,
                 reason="dry_run",
+                extra={"hotkeys": hotkeys},
             )
-            print({"dry_run_set_weights": {"uids": update.uids, "weights": update.weights},
-                   "hotkeys": [h for h, _v in ordered]})
+            print({"dry_run_set_weights": {"uids": update.uids, "weights": update.weights}, "hotkeys": hotkeys})
             return update
         if not normalized:
             return WeightUpdate(uids=[], weights=[], submitted=False, reason="no_scores")
@@ -158,11 +159,16 @@ class BittensorAdapter:
 
     @staticmethod
     def normalize_scores(scores: dict[str, float]) -> dict[str, float]:
+        """Map raw scores to non-negative weights that sum to 1.
+
+        When every score is zero (e.g. a single penalized miner), returns zeros
+        instead of awarding equal weight — the old equal-split path let a
+        failed miner receive 100% of dry-run weight.
+        """
         clean = {k: max(0.0, float(v)) for k, v in scores.items()}
         if not clean:
             return {}
         total = sum(clean.values())
         if total <= 0.0:
-            equal = 1.0 / len(clean)
-            return {k: equal for k in sorted(clean)}
+            return {k: 0.0 for k in sorted(clean)}
         return {k: v / total for k, v in clean.items()}

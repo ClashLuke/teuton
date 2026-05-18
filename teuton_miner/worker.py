@@ -1,8 +1,8 @@
 """Hotkey-bound worker process for Teuton v3."""
 from __future__ import annotations
 
-import os
 import json
+import os
 import logging
 import threading
 import time
@@ -33,6 +33,26 @@ from .capabilities import detect_capabilities, device_indices, gpu_index, probe_
 
 
 LOG = logging.getLogger(__name__)
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
 
 
 def _completed_cache_path(run_id: str, hotkey: str, worker_id: str) -> Path:
@@ -76,8 +96,10 @@ class WorkerConfig:
     device: str = "cpu"
     device_group: list[str] | None = None
     miner_secret: str = "miner-dev-secret"
-    poll_interval: float = 0.1
-    heartbeat_interval: float = 1.0
+    poll_interval: float = field(default_factory=lambda: _env_float("TEUTON_POLL_INTERVAL", 0.1))
+    poll_interval_idle: float = field(default_factory=lambda: _env_float("TEUTON_POLL_INTERVAL_IDLE", 1.0))
+    heartbeat_interval: float = field(default_factory=lambda: _env_float("TEUTON_HEARTBEAT_INTERVAL", 1.0))
+    audit_poll_stride: int = field(default_factory=lambda: _env_int("TEUTON_AUDIT_POLL_STRIDE", 5))
     fault_mode: str = ""
     fault_rate: float = 1.0
     encryption_secret: str = "teuton-dev-encryption"
@@ -155,6 +177,10 @@ class MinerWorker:
         )
         self.last_heartbeat = 0.0
         self.idle_iters = 0
+        self._train_polls = 0
+        self._skip_counts: dict[str, int] = {}
+        self._last_job_id: str | None = None
+        self._last_receipt_unix: int | None = None
         self._gpu_probe()
         self.heartbeat(force=True)
 
@@ -192,32 +218,73 @@ class MinerWorker:
 
     def loop(self) -> None:
         while not self.stop_event.is_set():
-            self.tick()
-            time.sleep(self.config.poll_interval)
+            did_work = self.tick()
+            wait = 0.0 if did_work else self._poll_sleep_sec()
+            if self.stop_event.wait(wait):
+                break
+
+    def _poll_sleep_sec(self) -> float:
+        if self._assigned_train_depth() > 0:
+            return float(self.config.poll_interval)
+        return float(self.config.poll_interval_idle)
 
     def tick(self) -> bool:
-        self.heartbeat()
+        self._maybe_heartbeat()
+        self._train_polls += 1
         entries = self._fetch_train_queue_entries()
+        assigned = self._filter_assigned(entries)
         # Iterate tail-first: the orchestrator's queue.outstanding ordering
         # follows insertion order, so newer entries land near the end. We
         # process newest-first so a backlogged miner makes progress on the
         # freshest work rather than slogging through aging entries.
-        for entry in reversed(entries):
+        for entry in reversed(assigned):
+            if self._execute_queue_entry(entry, role="train"):
+                self.idle_iters = 0
+                return True
+        if self._is_audit_eligible():
+            stride = max(1, int(self.config.audit_poll_stride))
+            if (not assigned or self._train_polls % stride == 0) and self._tick_audit_jobs():
+                self.idle_iters = 0
+                return True
+        self._idle()
+        return False
+
+    def _filter_assigned(self, entries: list[QueueEntry]) -> list[QueueEntry]:
+        out: list[QueueEntry] = []
+        for entry in entries:
             if entry.job_id in self.completed_jobs:
                 continue
             if entry.assigned_hotkey != self.config.hotkey_ss58:
                 continue
             if entry.assigned_worker not in (None, "", self.config.worker_id):
                 continue
-            if self._execute_queue_entry(entry, role="train"):
-                self.idle_iters = 0
-                return True
-        if self._is_audit_eligible():
-            if self._tick_audit_jobs():
-                self.idle_iters = 0
-                return True
-        self._idle()
-        return False
+            out.append(entry)
+        return out
+
+    def _assigned_train_depth(self) -> int:
+        if self._train_queue is None:
+            return 0
+        return len(self._filter_assigned(list(self._train_queue.outstanding)))
+
+    def _queue_runtime_metrics(self) -> dict:
+        entries = self._filter_assigned(list(self._train_queue.outstanding)) if self._train_queue else []
+        now = int(time.time())
+        oldest_age: float | None = None
+        oldest_job_id: str | None = None
+        for entry in entries:
+            if entry.created_unix:
+                age = max(0.0, float(now - int(entry.created_unix)))
+                if oldest_age is None or age > oldest_age:
+                    oldest_age = age
+                    oldest_job_id = entry.job_id
+        return {
+            "assigned_depth": len(entries),
+            "oldest_age_sec": oldest_age,
+            "oldest_job_id": oldest_job_id,
+            "last_job_id": self._last_job_id,
+            "last_receipt_unix": self._last_receipt_unix,
+            "skipped": dict(self._skip_counts),
+        }
 
     def _fetch_train_queue_entries(self) -> list[QueueEntry]:
         """Read the train queue snapshot, using ``If-None-Match`` for cheap polls.
@@ -238,11 +305,12 @@ class MinerWorker:
             LOG.debug("train queue read failed: %r", exc)
             return list(self._train_queue.outstanding) if self._train_queue is not None else []
         if state is None:
-            # Either 304 (etag unchanged) or queue.json absent. Fall back
-            # to whatever we last cached.
+            # 304: orchestrator may have advanced snapshot_id without changing
+            # etag length (rare) — still serve cache. If no cache, empty.
             return list(self._train_queue.outstanding) if self._train_queue is not None else []
         self._train_queue = state
-        self._train_queue_etag = state.etag
+        if state.etag:
+            self._train_queue_etag = state.etag
         return list(state.outstanding)
 
     def _execute_queue_entry(self, entry: QueueEntry, *, role: str) -> bool:
@@ -273,24 +341,25 @@ class MinerWorker:
         if not self._verify_manifest_signature(manifest):
             self._mark_skipped(manifest.job_id, "bad_owner_signature")
             return False
-        if self.config.grant_mode == "direct" and all(self.bucket.exists(ref.uri) for ref in manifest.outputs):
-            self.completed_jobs.add(manifest.job_id)
-            _append_completed_cache(self._completed_cache_path, manifest.job_id)
-            return False
-        if self.config.grant_mode == "direct" and not all(self.bucket.exists(ref.uri) for ref in manifest.inputs):
-            self._mark_skipped(manifest.job_id, "missing_input_artifacts")
-            return False
-        graph_uri = manifest.graph_ref.uri
-        if graph_uri and not self.bucket.exists(graph_uri):
-            self._mark_skipped(manifest.job_id, "missing_graph_artifact")
-            return False
+        if self.config.grant_mode == "direct":
+            if all(self.bucket.exists(ref.uri) for ref in manifest.outputs):
+                self.completed_jobs.add(manifest.job_id)
+                _append_completed_cache(self._completed_cache_path, manifest.job_id)
+                return False
+            if not all(self.bucket.exists(ref.uri) for ref in manifest.inputs):
+                self._mark_skipped(manifest.job_id, "missing_input_artifacts")
+                return False
+            graph_uri = manifest.graph_ref.uri
+            if graph_uri and not self.bucket.exists(graph_uri):
+                self._mark_skipped(manifest.job_id, "missing_graph_artifact")
+                return False
         try:
             if self.config.grant_mode == "direct":
                 grant = None
             elif role == "audit":
-                grant = self._load_audit_assignment_grant(manifest)
+                grant = self._load_audit_assignment_grant(manifest, entry=entry)
             else:
-                grant = self.load_assignment_grant(manifest)
+                grant = self._load_assignment_grant(manifest, entry=entry)
         except FileNotFoundError:
             self._mark_skipped(manifest.job_id, "missing_assignment_grant")
             return False
@@ -334,6 +403,8 @@ class MinerWorker:
             self.bucket.put_json(receipt_uri, receipt.to_dict())
         self.completed_jobs.add(manifest.job_id)
         _append_completed_cache(self._completed_cache_path, manifest.job_id)
+        self._last_job_id = manifest.job_id
+        self._last_receipt_unix = int(time.time())
         return True
 
     def _execute_audit_replay(
@@ -375,6 +446,8 @@ class MinerWorker:
             self.bucket.put_json(result_uri, audit.to_dict())
         self.completed_jobs.add(manifest.job_id)
         _append_completed_cache(self._completed_cache_path, manifest.job_id)
+        self._last_job_id = manifest.job_id
+        self._last_receipt_unix = int(time.time())
         return True
 
     def _is_audit_eligible(self) -> bool:
@@ -410,8 +483,28 @@ class MinerWorker:
                 return True
         return False
 
-    def _load_audit_assignment_grant(self, manifest: JobManifestV3) -> AssignmentGrantV3:
-        uri = self.bucket.uri_for_key(
+    def _load_assignment_grant(
+        self, manifest: JobManifestV3, *, entry: QueueEntry | None = None
+    ) -> AssignmentGrantV3:
+        uri = entry.grant_uri if entry and entry.grant_uri else self.bucket.uri_for_key(
+            paths.assignment_key(
+                self.config.netuid,
+                self.config.run_id,
+                manifest.job_id,
+                self.config.hotkey_ss58,
+            )
+        )
+        if not uri:
+            raise FileNotFoundError(f"missing assignment grant for {manifest.job_id}")
+        encrypted = EncryptedAssignmentGrantV3.from_dict(self.bucket.get_json(uri))
+        grant = self.assignment_crypto.decrypt(encrypted, expected_hotkey=self.config.hotkey_ss58)
+        self.validate_assignment_grant(manifest, grant)
+        return grant
+
+    def _load_audit_assignment_grant(
+        self, manifest: JobManifestV3, *, entry: QueueEntry | None = None
+    ) -> AssignmentGrantV3:
+        uri = entry.grant_uri if entry and entry.grant_uri else self.bucket.uri_for_key(
             paths.audit_assignment_key(
                 self.config.netuid,
                 self.config.run_id,
@@ -419,7 +512,7 @@ class MinerWorker:
                 self.config.hotkey_ss58,
             )
         )
-        if not self.bucket.exists(uri):
+        if not uri:
             raise FileNotFoundError(f"missing audit assignment grant for {manifest.job_id}")
         encrypted = EncryptedAssignmentGrantV3.from_dict(self.bucket.get_json(uri))
         grant = self.assignment_crypto.decrypt(encrypted, expected_hotkey=self.config.hotkey_ss58)
@@ -430,22 +523,6 @@ class MinerWorker:
             raise ValueError("audit assignment grant hotkey mismatch")
         if grant.expires_unix < now:
             raise ValueError("audit assignment grant expired")
-        return grant
-
-    def load_assignment_grant(self, manifest: JobManifestV3) -> AssignmentGrantV3:
-        uri = self.bucket.uri_for_key(
-            paths.assignment_key(
-                self.config.netuid,
-                self.config.run_id,
-                manifest.job_id,
-                self.config.hotkey_ss58,
-            )
-        )
-        if not self.bucket.exists(uri):
-            raise FileNotFoundError(f"missing assignment grant for {manifest.job_id}")
-        encrypted = EncryptedAssignmentGrantV3.from_dict(self.bucket.get_json(uri))
-        grant = self.assignment_crypto.decrypt(encrypted, expected_hotkey=self.config.hotkey_ss58)
-        self.validate_assignment_grant(manifest, grant)
         return grant
 
     @staticmethod
@@ -499,13 +576,16 @@ class MinerWorker:
     def _mark_skipped(self, job_id: str, reason: str) -> None:
         """Surface a job that the miner declined to run.
 
-        Writes a tiny ``skip.json`` next to the manifest with the hotkey,
+        Increments in-memory skip counters (surfaced on heartbeat) and writes
+        a tiny ``skip.json`` next to the manifest with the hotkey,
         worker_id, and reason. Operators can list these via the bucket to
         diagnose silent drops -- previously every skip was a bare
         ``except: continue`` and the job just disappeared from the operator
         view. Failures here are best-effort; we never let a write error
         stop the worker loop.
         """
+        bucket_key = reason.split(":", 1)[0]
+        self._skip_counts[bucket_key] = self._skip_counts.get(bucket_key, 0) + 1
         try:
             key = (
                 f"{paths.jobs_prefix(self.config.netuid, self.config.run_id)}"
@@ -524,14 +604,22 @@ class MinerWorker:
         except Exception:
             pass
 
-    def heartbeat(self, *, force: bool = False) -> None:
+    def _maybe_heartbeat(self, *, force: bool = False) -> None:
         now = time.time()
         if not force and now - self.last_heartbeat < self.config.heartbeat_interval:
             return
-        self.last_heartbeat = now
+        self.heartbeat(force=True)
+
+    def heartbeat(self, *, force: bool = False) -> None:
+        del force
+        self.last_heartbeat = time.time()
         info = MinerIdentity(
             netuid=self.config.netuid,
             hotkey_ss58=self.config.hotkey_ss58,
             capabilities=dict(self.capabilities),
         )
-        self.discovery.advertise_worker(miner=info, worker=self.identity)
+        self.discovery.advertise_worker(
+            miner=info,
+            worker=self.identity,
+            runtime=self._queue_runtime_metrics(),
+        )

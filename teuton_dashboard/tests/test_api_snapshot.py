@@ -30,6 +30,9 @@ async def test_snapshot_returns_queue_and_machines(client, app):
     assert worker["queue_depth"] == 1
     assert worker["queue_cap"] == 4
     assert worker["at_cap"] is False
+    assert worker["runtime"]["assigned_depth"] == 1
+    assert worker["runtime"]["skipped"]["missing_grant"] == 2
+    assert worker["runtime"]["oldest_job_id"] == "j-a"
 
 
 async def test_queue_endpoint(client, app):

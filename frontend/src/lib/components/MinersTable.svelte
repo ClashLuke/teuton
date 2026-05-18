@@ -18,7 +18,7 @@
         { id: 'stale', label: 'Stale' },
         { id: 'at-cap', label: 'At-cap' }
     ];
-    const SORT_KEYS = ['status', 'identity', 'uid', 'emission', 'inflight', 'receipts', 'ping'] as const;
+    const SORT_KEYS = ['status', 'identity', 'uid', 'emission', 'inflight', 'skips', 'receipts', 'ping'] as const;
     type SortKey = (typeof SORT_KEYS)[number];
 
     let activeFilter = 'all';
@@ -57,6 +57,7 @@
         if (key === 'uid') return chain?.uid ?? -1;
         if (key === 'emission') return chain?.emission ?? -1;
         if (key === 'receipts') return Number(w.n_receipts || 0);
+        if (key === 'skips') return skipTotal(w);
         if (key === 'inflight') return Number(w.queue_depth || 0);
         if (key === 'ping') {
             const v = cap.rtt_to_bucket_ms;
@@ -110,6 +111,25 @@
         const ms = cap.rtt_to_bucket_ms;
         return typeof ms === 'number' ? fmtDurationSec(ms / 1000) : '--';
     }
+
+    function skipTotal(w: WorkerRow): number {
+        const skipped = w.runtime?.skipped;
+        if (!skipped) return 0;
+        return Object.values(skipped).reduce((sum, n) => sum + Number(n || 0), 0);
+    }
+
+    function skipBreakdown(w: WorkerRow): string {
+        const skipped = w.runtime?.skipped;
+        if (!skipped) return '';
+        return Object.entries(skipped)
+            .map(([reason, count]) => `${reason}: ${count}`)
+            .join(', ');
+    }
+
+    function oldestLabel(w: WorkerRow): string {
+        const age = w.runtime?.oldest_age_sec;
+        return typeof age === 'number' ? fmtDurationSec(age) : '--';
+    }
 </script>
 
 <section>
@@ -128,9 +148,9 @@
     <div class="overflow-auto scroll-thin max-h-[60vh]">
         <table class="w-full text-[11px] crosshair" style="table-layout: fixed;">
             <colgroup>
-                <col style="width: 4%" /><col style="width: 8%" /><col style="width: 18%" />
-                <col style="width: 14%" /><col style="width: 6%" /><col style="width: 9%" />
-                <col style="width: 18%" /><col style="width: 8%" /><col style="width: 8%" />
+                <col style="width: 4%" /><col style="width: 7%" /><col style="width: 16%" />
+                <col style="width: 12%" /><col style="width: 5%" /><col style="width: 8%" />
+                <col style="width: 16%" /><col style="width: 6%" /><col style="width: 7%" /><col style="width: 7%" />
             </colgroup>
             <thead class="sticky top-0 bg-paper">
                 <tr class="border-b dashed">
@@ -142,6 +162,7 @@
                         { label: 'UID', key: 'uid' as const },
                         { label: 'Emit', key: 'emission' as const },
                         { label: 'Inflight', key: 'inflight' as const },
+                        { label: 'Skips', key: 'skips' as const },
                         { label: 'Rcpts', key: 'receipts' as const },
                         { label: 'Ping', key: 'ping' as const }
                     ] as h}
@@ -169,15 +190,22 @@
                         <td class="text-right" title={String(r.worker.chain?.emission ?? '')}>
                             {r.worker.chain?.emission != null ? fmtPoints(r.worker.chain.emission) : '--'}
                         </td>
-                        <td class="text-right">
+                        <td class="text-right" title={oldestLabel(r.worker) !== '--' ? `oldest ${oldestLabel(r.worker)}` : ''}>
                             <InflightBar depth={r.worker.queue_depth} cap={r.worker.queue_cap} atCap={r.worker.at_cap} compact />
+                        </td>
+                        <td
+                            class="text-right"
+                            class:text-warn={skipTotal(r.worker) > 0}
+                            title={skipBreakdown(r.worker) || undefined}
+                        >
+                            {skipTotal(r.worker)}
                         </td>
                         <td class="text-right">{r.worker.n_receipts}</td>
                         <td class="text-right">{pingLabel(r.worker)}</td>
                     </tr>
                 {/each}
                 {#if !rows.length}
-                    <tr><td colspan="9" class="text-center py-4 opacity-60">No miners.</td></tr>
+                    <tr><td colspan="10" class="text-center py-4 opacity-60">No miners.</td></tr>
                 {/if}
             </tbody>
         </table>

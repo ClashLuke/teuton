@@ -128,6 +128,18 @@ class ChainSummary(BaseModel):
     observed_unix: Optional[int] = None
 
 
+class WorkerRuntime(BaseModel):
+    """Per-worker queue/skip telemetry from heartbeat ``runtime``."""
+
+    model_config = ConfigDict(extra="ignore")
+    assigned_depth: int = 0
+    oldest_age_sec: Optional[float] = None
+    oldest_job_id: Optional[str] = None
+    last_job_id: Optional[str] = None
+    last_receipt_unix: Optional[int] = None
+    skipped: dict[str, int] = Field(default_factory=dict)
+
+
 class WorkerRow(BaseModel):
     role: str
     status: str
@@ -140,6 +152,7 @@ class WorkerRow(BaseModel):
     queue_depth: int = 0
     queue_cap: int = 0
     at_cap: bool = False
+    runtime: Optional[WorkerRuntime] = None
     sources: list[str] = Field(default_factory=list)
 
 

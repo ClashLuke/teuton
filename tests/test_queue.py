@@ -241,6 +241,28 @@ def test_invalid_role_raises() -> None:
         paths.queue_key(0, "any-run", "stranger")
 
 
+def test_request_flush_publishes_immediately(local_bucket, run_id) -> None:
+    queue = OrchestratorQueue(
+        bucket=local_bucket,
+        netuid=0,
+        run_id=run_id,
+        flush_interval_sec=5.0,
+    )
+    queue.start_background_flush()
+    try:
+        queue.add(_entry("urgent"))
+        queue.request_flush()
+        for _ in range(50):
+            time.sleep(0.05)
+            state = read_queue(local_bucket, netuid=0, run_id=run_id)
+            if state is not None and any(e.job_id == "urgent" for e in state.outstanding):
+                break
+        else:
+            pytest.fail("request_flush did not publish within 2.5s")
+    finally:
+        queue.stop()
+
+
 def test_background_flush_thread_publishes(local_bucket, run_id) -> None:
     queue = OrchestratorQueue(
         bucket=local_bucket,

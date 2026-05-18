@@ -39,4 +39,6 @@ async def runs(
         "SELECT run_id FROM runs WHERE netuid=? ORDER BY last_seen_unix DESC, run_id DESC LIMIT 100",
         (settings.netuid,),
     )
-    return RunsResponse(runs=[r["run_id"] for r in rows], default_run_id=settings.run_id or "")
+    run_ids = [r["run_id"] for r in rows]
+    default = settings.run_id or (run_ids[0] if run_ids else "")
+    return RunsResponse(runs=run_ids, default_run_id=default)

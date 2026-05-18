@@ -42,7 +42,13 @@ def test_validator_zeroes_corrupt_miner(local_bucket, run_id, start_miners) -> N
     assert result["scores"]["miner0"]["fail_cu"] > 0.0
     assert result["scores"]["miner0"]["score"] == 0.0
     assert result["scores"]["miner0"]["trust_multiplier"] == 0.0
-    assert result["weight_update"]["weights"][0] == 0.0
+    assert "miner1" in result["scores"]
+    assert result["scores"]["miner1"]["score"] > 0.0
+    wu = result["weight_update"]
+    assert wu is not None
+    by_hotkey = dict(zip(wu["extra"]["hotkeys"], wu["weights"]))
+    assert by_hotkey["miner0"] == 0.0
+    assert by_hotkey["miner1"] > 0.0
 
 
 def test_bad_miner_signature_is_a_failed_verdict(local_bucket, run_id, start_miners) -> None:

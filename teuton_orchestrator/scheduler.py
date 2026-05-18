@@ -69,13 +69,19 @@ class QuotaBook:
         manager).
         """
         requirements = requirements or ResourceRequirements()
+        queue_gated = hotkey_filter is not None
         candidates: list[tuple[float, WorkerIdentity, MinerAccount]] = []
         for account in self.accounts.values():
             if hotkey_filter is not None and not hotkey_filter(account.identity.hotkey_ss58):
                 continue
-            if account.available_quota < estimated_cu or not account.workers:
+            # When queue depth is the backpressure signal, skip legacy CU quota
+            # (``reconcile_inflight_from_queue`` maps depth -> inflight_cu for
+            # priority only; it must not block assignment).
+            if not queue_gated and account.available_quota < estimated_cu:
                 continue
-            priority = account.trust_multiplier * (1.0 + len(account.workers)) / max(1.0, account.inflight_cu)
+            if not account.workers:
+                continue
+            priority = account.trust_multiplier * (1.0 + len(account.workers)) / (account.inflight_cu + 1.0)
             for worker in account.workers.values():
                 if not self.worker_satisfies(worker, requirements):
                     continue
@@ -100,6 +106,21 @@ class QuotaBook:
         account = self.accounts.get(hotkey)
         if account is not None:
             account.inflight_cu = max(0.0, account.inflight_cu - estimated_cu)
+
+    def reconcile_inflight_from_queue(
+        self,
+        depth_for_hotkey,
+        *,
+        default_cu: float = 1.0,
+    ) -> None:
+        """Align ``inflight_cu`` with authoritative queue depth.
+
+        ``depth_for_hotkey`` is typically ``queue.depth``. Prevents priority
+        math from drifting when releases are best-effort (timeouts, stress).
+        """
+        for hotkey, account in self.accounts.items():
+            depth = int(depth_for_hotkey(hotkey))
+            account.inflight_cu = max(0.0, float(depth) * float(default_cu))
 
 
 class CriticalGate:

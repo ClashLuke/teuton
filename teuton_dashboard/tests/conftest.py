@@ -57,6 +57,14 @@ def seeded_bucket(bucket, settings) -> LocalBucket:
             gpu_index=0, session_nonce="n", software_hash="dev",
             device_group=[0], worker_group_id=None, capabilities={},
         ),
+        runtime={
+            "assigned_depth": 1,
+            "oldest_age_sec": 12.0,
+            "oldest_job_id": "j-a",
+            "last_job_id": "j-done",
+            "last_receipt_unix": int(time.time()) - 3,
+            "skipped": {"missing_grant": 2},
+        },
     )
     q = OrchestratorQueue(bucket=bucket, netuid=netuid, run_id=run_id, role="train")
     q.add(QueueEntry(

@@ -27,6 +27,7 @@ from ..models import (
     SnapshotMeta,
     SnapshotResponse,
     WorkerRow,
+    WorkerRuntime,
 )
 from ..queue_bus import QueueBus
 from ..settings import Settings
@@ -285,6 +286,10 @@ async def _machines(
             miner["chain"] = chain.model_dump()
         depth = int(inflight.get(r["hotkey"], 0))
         at_cap = bool(cap and depth >= cap)
+        runtime = _parse_runtime(r)
+        if runtime is not None and runtime.assigned_depth > depth:
+            depth = int(runtime.assigned_depth)
+            at_cap = bool(cap and depth >= cap)
         m.workers.append(
             WorkerRow(
                 role=r["role"],
@@ -298,10 +303,27 @@ async def _machines(
                 queue_depth=depth,
                 queue_cap=int(cap or 0),
                 at_cap=at_cap,
+                runtime=runtime,
                 sources=["heartbeat", "sqlite"],
             )
         )
     return sorted(by_host.values(), key=lambda m: m.host_id)
+
+
+def _parse_runtime(row) -> Optional[WorkerRuntime]:
+    raw = row["runtime_json"] if "runtime_json" in row.keys() else None
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(payload, dict) or not payload:
+        return None
+    try:
+        return WorkerRuntime.model_validate(payload)
+    except Exception:
+        return None
 
 
 def _chain_summary(row) -> Optional[ChainSummary]:

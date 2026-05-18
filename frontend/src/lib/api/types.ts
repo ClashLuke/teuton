@@ -96,6 +96,15 @@ export interface ChainSummary {
     observed_unix: number | null;
 }
 
+export interface WorkerRuntime {
+    assigned_depth?: number;
+    oldest_age_sec?: number | null;
+    oldest_job_id?: string | null;
+    last_job_id?: string | null;
+    last_receipt_unix?: number | null;
+    skipped?: Record<string, number>;
+}
+
 export interface WorkerRow {
     role: string;
     status: 'live' | 'stale' | string;
@@ -108,6 +117,7 @@ export interface WorkerRow {
     queue_depth: number;
     queue_cap: number;
     at_cap: boolean;
+    runtime?: WorkerRuntime | null;
     sources: string[];
 }
 

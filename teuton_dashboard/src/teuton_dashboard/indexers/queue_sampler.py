@@ -11,6 +11,9 @@ and:
 The list of active ``(run_id, role)`` pairs is rediscovered every cycle from
 the dashboard's ``runs`` table so newly-created runs are picked up without a
 process restart.
+
+Queue bodies are only decoded when the bucket etag changes (``If-None-Match``),
+so idle fleets do not pay repeated JSON parse cost on every sample tick.
 """
 from __future__ import annotations
 
@@ -44,6 +47,8 @@ async def run_queue_sampler_loop(
     stop_event: asyncio.Event,
 ) -> None:
     seen_snapshot_id: dict[tuple[str, str], int] = {}
+    seen_etag: dict[tuple[str, str], str] = {}
+    cached_state: dict[tuple[str, str], QueueState] = {}
     while not stop_event.is_set():
         try:
             run_ids = await _active_run_ids(db, settings)
@@ -56,6 +61,8 @@ async def run_queue_sampler_loop(
                         run_id=run_id,
                         role=role,
                         seen=seen_snapshot_id,
+                        etags=seen_etag,
+                        cached=cached_state,
                     )
         except Exception:
             LOG.warning("queue sampler error: %s", traceback.format_exc(limit=6))
@@ -83,28 +90,65 @@ async def _sample_one(
     run_id: str,
     role: str,
     seen: dict[tuple[str, str], int],
+    etags: dict[tuple[str, str], str],
+    cached: dict[tuple[str, str], QueueState],
 ) -> None:
-    state = await asyncio.to_thread(
-        _safe_read_queue, bucket, settings.netuid, run_id, role
+    key = (run_id, role)
+    state, unchanged = await asyncio.to_thread(
+        _read_queue_cached, bucket, settings.netuid, run_id, role, etags, key, cached
     )
-    if state is None:
-        return
     now = int(time.time())
-    snap = _state_to_snapshot(
-        state=state, run_id=run_id, role=role, cap=settings.max_inflight_per_hotkey, bus=bus, now_unix=now
-    )
-    # Record one history point per sample (regardless of whether the snapshot
-    # changed) so the sparkline shows a continuous line even when the queue
-    # is idle.
+    if state is not None:
+        snap = _state_to_snapshot(
+            state=state, run_id=run_id, role=role, cap=settings.max_inflight_per_hotkey, bus=bus, now_unix=now
+        )
+    elif unchanged and key in cached:
+        snap = _state_to_snapshot(
+            state=cached[key],
+            run_id=run_id,
+            role=role,
+            cap=settings.max_inflight_per_hotkey,
+            bus=bus,
+            now_unix=now,
+        )
+    else:
+        return
+
     bus.record_history_point(
         run_id,
         role,
         QueueHistoryPoint(ts=now, depth_total=snap.depth_total, at_cap_count=snap.at_cap_count),
     )
-    key = (run_id, role)
+    if unchanged:
+        return
     if seen.get(key) != snap.snapshot_id:
         seen[key] = snap.snapshot_id
         await bus.publish(snap)
+
+
+def _read_queue_cached(
+    bucket: ObjectStore,
+    netuid: int,
+    run_id: str,
+    role: str,
+    etags: dict[tuple[str, str], str],
+    key: tuple[str, str],
+    cached: dict[tuple[str, str], QueueState],
+) -> tuple[QueueState | None, bool]:
+    """Return ``(state, unchanged)`` where ``unchanged`` means the etag matched (304)."""
+    try:
+        prior = etags.get(key)
+        state = read_queue(bucket, netuid=netuid, run_id=run_id, role=role, if_none_match=prior)
+    except Exception as exc:
+        LOG.debug("queue read failed for %s/%s: %r", run_id, role, exc)
+        return None, False
+    if state is None and prior is not None:
+        return None, True
+    if state is not None:
+        if state.etag:
+            etags[key] = state.etag
+        cached[key] = state
+    return state, False
 
 
 def _safe_read_queue(bucket: ObjectStore, netuid: int, run_id: str, role: str) -> QueueState | None:

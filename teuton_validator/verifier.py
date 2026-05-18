@@ -13,6 +13,7 @@ from teuton_core.ir import Graph
 from teuton_core.protocol import AuditResultV3, JobManifestV3, JobReceiptV3, MinerScoreWindow, VerificationVerdictV3
 from teuton_core.signatures import Signer, verify_dict, verify_identity_dict
 from teuton_runtime.crypto import DrandTimelockProvider
+from teuton_runtime.queue import scan_recent_receipt_uris
 from teuton_runtime.storage import ObjectStore
 from .audit import AuditReplayConfig, AuditReplayRunner
 from .compute_units import expected_compute_units
@@ -44,6 +45,9 @@ class ReplayVerifier:
     def __init__(self, *, bucket: ObjectStore, config: ValidatorConfig) -> None:
         self.bucket = bucket
         self.config = config
+        # ``None`` => first sample pass scans all receipts; thereafter only
+        # objects newer than the cursor (mirrors orchestrator queue drain).
+        self._receipt_scan_cursor: float | None = None
 
     def run_once(self, *, max_receipts: int | None = None) -> int:
         checked = 0
@@ -81,11 +85,25 @@ class ReplayVerifier:
         return checked
 
     def sample_receipts(self) -> list[tuple[str, JobReceiptV3]]:
-        prefix = self.bucket.uri_for_key(paths.receipts_prefix(self.config.netuid, self.config.run_id))
+        since = None
+        if self._receipt_scan_cursor is not None:
+            since = max(0.0, self._receipt_scan_cursor - 5.0)
+        try:
+            uris = scan_recent_receipt_uris(
+                self.bucket,
+                netuid=self.config.netuid,
+                run_id=self.config.run_id,
+                since_unix=since,
+            )
+        except Exception:
+            uris = []
+        if not uris and self._receipt_scan_cursor is None:
+            prefix = self.bucket.uri_for_key(paths.receipts_prefix(self.config.netuid, self.config.run_id))
+            uris = [uri for uri in self.bucket.list(prefix) if uri.endswith(".json")]
+        self._receipt_scan_cursor = time.time()
+
         out: list[tuple[str, JobReceiptV3]] = []
-        for uri in self.bucket.list(prefix):
-            if not uri.endswith(".json"):
-                continue
+        for uri in uris:
             try:
                 receipt = JobReceiptV3.from_dict(self.bucket.get_json(uri))
             except Exception:
@@ -245,10 +263,19 @@ def summarize_scores(
 ) -> dict[str, MinerScoreWindow]:
     window_id = window_id or f"run={run_id}"
     receipts: dict[str, JobReceiptV3] = {}
-    for uri in bucket.list(bucket.uri_for_key(paths.receipts_prefix(netuid, run_id))):
-        if uri.endswith(".json"):
+    uris = scan_recent_receipt_uris(bucket, netuid=netuid, run_id=run_id)
+    if not uris:
+        uris = [
+            uri
+            for uri in bucket.list(bucket.uri_for_key(paths.receipts_prefix(netuid, run_id)))
+            if uri.endswith(".json")
+        ]
+    for uri in uris:
+        try:
             r = JobReceiptV3.from_dict(bucket.get_json(uri))
-            receipts[r.receipt_id] = r
+        except Exception:
+            continue
+        receipts[r.receipt_id] = r
     verdicts: dict[str, VerificationVerdictV3] = {}
     for uri in bucket.list(bucket.uri_for_key(paths.verdicts_prefix(netuid, run_id))):
         if uri.endswith(".json"):

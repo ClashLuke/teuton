@@ -101,6 +101,9 @@ class ValidatorNeuron:
             validator_hotkey=self.config.validator_hotkey,
         )
         scores = {hotkey: window.score for hotkey, window in windows.items()}
+        # Weights follow verified good work (pass_cu), not the display score that
+        # still credits unsampled_cu under a trust multiplier.
+        weight_scores = {hotkey: float(window.pass_cu) for hotkey, window in windows.items()}
         score_seconds = time.time() - t1
 
         # Emit the per-pass score snapshot to telemetry (rolling time series).
@@ -122,7 +125,7 @@ class ValidatorNeuron:
         update: WeightUpdate | None = None
         if publish_weights:
             try:
-                update = self.subnet.publish_weights(scores)
+                update = self.subnet.publish_weights(weight_scores)
             except Exception as e:
                 # Defensive: previous versions could raise; new BittensorAdapter
                 # returns a WeightUpdate(submitted=False) instead.

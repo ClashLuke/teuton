@@ -154,6 +154,7 @@ async def _index_workers(
                         json.dumps(record.worker.capabilities, sort_keys=True),
                         json.dumps(record.miner.to_dict(), sort_keys=True),
                         json.dumps(record.worker.to_dict(), sort_keys=True),
+                        json.dumps(record.runtime, sort_keys=True),
                     )
                 )
         return rows
@@ -161,15 +162,16 @@ async def _index_workers(
     rows = await asyncio.to_thread(scan)
     return await db.executemany(
         """
-        INSERT INTO workers(netuid, run_id, hotkey, worker_id, host_id, role, status, last_seen_unix, capabilities_json, miner_json, worker_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO workers(netuid, run_id, hotkey, worker_id, host_id, role, status, last_seen_unix, capabilities_json, miner_json, worker_json, runtime_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(netuid, run_id, hotkey, worker_id, role) DO UPDATE SET
             host_id=excluded.host_id,
             status=excluded.status,
             last_seen_unix=excluded.last_seen_unix,
             capabilities_json=excluded.capabilities_json,
             miner_json=excluded.miner_json,
-            worker_json=excluded.worker_json
+            worker_json=excluded.worker_json,
+            runtime_json=excluded.runtime_json
         """,
         rows,
     )

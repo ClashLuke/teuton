@@ -223,6 +223,7 @@ class OrchestratorQueue:
         self._dirty = False
         self._pending_changes = 0
         self._stop_event = threading.Event()
+        self._flush_requested = threading.Event()
         self._flush_thread: threading.Thread | None = None
 
     # ------------------------------------------------------------------
@@ -443,6 +444,10 @@ class OrchestratorQueue:
     # Background flush thread
     # ------------------------------------------------------------------
 
+    def request_flush(self) -> None:
+        """Ask the background flush thread to publish as soon as possible."""
+        self._flush_requested.set()
+
     def start_background_flush(self) -> None:
         """Spawn a daemon thread that periodically calls :meth:`flush`."""
         if self._flush_thread is not None and self._flush_thread.is_alive():
@@ -470,24 +475,82 @@ class OrchestratorQueue:
 
     def _flush_loop(self) -> None:
         while not self._stop_event.is_set():
-            should_flush = False
-            with self._lock:
-                if self._dirty:
-                    should_flush = (
-                        self._pending_changes >= self.flush_max_changes
-                        or self._pending_changes > 0
-                    )
-            if should_flush:
+            if self._flush_requested.is_set():
+                self._flush_requested.clear()
                 try:
                     self.flush()
                 except Exception as exc:
                     LOG.warning("queue background flush failed: %r", exc)
-            self._stop_event.wait(self.flush_interval_sec)
+            else:
+                should_flush = False
+                with self._lock:
+                    if self._dirty:
+                        should_flush = (
+                            self._pending_changes >= self.flush_max_changes
+                            or self._pending_changes > 0
+                        )
+                if should_flush:
+                    try:
+                        self.flush()
+                    except Exception as exc:
+                        LOG.warning("queue background flush failed: %r", exc)
+            deadline = time.monotonic() + self.flush_interval_sec
+            while time.monotonic() < deadline and not self._stop_event.is_set():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                if self._flush_requested.wait(timeout=min(0.05, remaining)):
+                    self._flush_requested.clear()
+                    try:
+                        self.flush()
+                    except Exception as exc:
+                        LOG.warning("queue background flush failed: %r", exc)
+                    break
 
 
 # ----------------------------------------------------------------------
 # Receipt -> queue reconciliation helper for the orchestrator side
 # ----------------------------------------------------------------------
+
+
+def scan_recent_receipt_uris(
+    bucket: ObjectStore,
+    *,
+    netuid: int,
+    run_id: str,
+    since_unix: float | None = None,
+    limit: int = 50000,
+) -> list[str]:
+    """Return receipt object URIs written after ``since_unix``.
+
+    Same LIST cost as :func:`scan_recent_receipt_job_ids` but preserves URIs
+    for validators that must load receipt bodies.
+    """
+    out: list[str] = []
+    receipts_uri = bucket.uri_for_key(paths.receipts_prefix(netuid, run_id))
+    list_meta = getattr(bucket, "list_with_meta", None)
+    if list_meta is not None:
+        entries = list_meta(receipts_uri)
+        count = 0
+        for uri, mtime, _size in entries:
+            if count >= limit:
+                break
+            if not uri.endswith(".json"):
+                continue
+            if since_unix is not None and mtime < int(since_unix):
+                continue
+            out.append(uri)
+            count += 1
+        return out
+    count = 0
+    for uri in bucket.list(receipts_uri):
+        if count >= limit:
+            break
+        if not uri.endswith(".json"):
+            continue
+        out.append(uri)
+        count += 1
+    return out
 
 
 def scan_recent_receipt_job_ids(

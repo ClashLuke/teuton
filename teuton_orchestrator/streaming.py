@@ -18,6 +18,7 @@ from teuton_core.telemetry import TelemetryWriter
 from teuton_core.wallet_crypto import AssignmentEncryptor, DevAssignmentCrypto, Ed25519SealedBoxAssignmentCrypto
 from teuton_runtime.discovery import build_discovery_backend
 from teuton_runtime.grants import broker_for_mode
+from teuton_runtime.compute_units import expected_compute_units_from_graph
 from teuton_runtime.queue import OrchestratorQueue, QueueEntry, scan_recent_receipt_job_ids
 from teuton_runtime.storage import ObjectStore
 from teuton_tasks import load_streaming_task
@@ -116,6 +117,7 @@ class StreamingRunManager:
         # would otherwise drain today's queue entries before miners can
         # process them).
         self._receipt_scan_cursor: float = time.time()
+        self._at_cap_hotkeys: set[str] = set()
 
     def bootstrap(self) -> None:
         if not (self.config.stress_emit and self._bootstrap_artifacts_present()):
@@ -145,6 +147,7 @@ class StreamingRunManager:
         records = self.discovery.discover_workers()
         workers = [record.worker for record in records]
         self.quota.update_workers([record.miner for record in records], workers)
+        self.quota.reconcile_inflight_from_queue(self.queue.depth)
         return workers
 
     def run_loop(self, *, poll_interval: float = 0.1, timeout_sec: float = 600.0) -> None:
@@ -508,7 +511,9 @@ class StreamingRunManager:
             worker = force_worker
         else:
             max_inflight = self.config.max_inflight_per_hotkey
+            estimated_cu = expected_compute_units_from_graph(graph)
             worker = self.quota.pick_worker(
+                estimated_cu=estimated_cu,
                 requirements=requirements,
                 hotkey_filter=lambda hk: self.queue.depth(hk) < max_inflight,
             )
@@ -538,6 +543,8 @@ class StreamingRunManager:
         self.emitted.append(job_id)
         self.jobs[job_id] = manifest
         self.queue.add(QueueEntry.from_manifest(manifest, manifest_uri=manifest_uri, grant_uri=grant_uri))
+        self.queue.request_flush()
+        self._note_cap_release_flush()
         return manifest
 
     def wait_epoch(self, epoch: int, *, deadline: float, poll_interval: float) -> None:
@@ -634,7 +641,24 @@ class StreamingRunManager:
         # Drop deadline-expired entries so per-hotkey backpressure releases.
         expired = self.queue.prune_expired()
         self._receipt_scan_cursor = time.time()
+        if removed or expired:
+            self._note_cap_release_flush()
+        self.quota.reconcile_inflight_from_queue(self.queue.depth)
         return removed + len(expired)
+
+    def _hotkeys_at_cap(self) -> set[str]:
+        cap = int(self.config.max_inflight_per_hotkey)
+        if cap <= 0:
+            return set()
+        hotkeys = {entry.assigned_hotkey for entry in self.queue}
+        return {hk for hk in hotkeys if self.queue.depth(hk) >= cap}
+
+    def _note_cap_release_flush(self) -> None:
+        current = self._hotkeys_at_cap()
+        released = self._at_cap_hotkeys - current
+        self._at_cap_hotkeys = current
+        if released:
+            self.queue.request_flush()
 
     def fwd_output_uri(self, epoch: int, stage_id: int, mb: int, name: str) -> str:
         return self.bucket.uri_for_key(f"runs/{self.config.run_id}/streaming/epoch={epoch}/stage={stage_id}/outputs/mb={mb}/{name}.bin")

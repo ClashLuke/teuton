@@ -17,6 +17,7 @@ class DiscoveryRecord:
     run_id: str
     last_seen_unix: int
     role: str = "train"
+    runtime: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
@@ -42,7 +43,13 @@ class BucketMinerObservation:
 
 
 class DiscoveryBackend(Protocol):
-    def advertise_worker(self, *, miner: MinerIdentity, worker: WorkerIdentity) -> None:
+    def advertise_worker(
+        self,
+        *,
+        miner: MinerIdentity,
+        worker: WorkerIdentity,
+        runtime: dict | None = None,
+    ) -> None:
         """Publish a worker identity to the selected discovery plane."""
 
     def discover_workers(self) -> list[DiscoveryRecord]:
@@ -67,17 +74,23 @@ class BucketDiscoveryBackend:
         self.role = role
         self.heartbeat_ttl_sec = heartbeat_ttl_sec
 
-    def advertise_worker(self, *, miner: MinerIdentity, worker: WorkerIdentity) -> None:
-        self.bucket.put_json(
-            self.bucket.uri_for_key(self._heartbeat_key(worker)),
-            {
-                "miner": miner.to_dict(),
-                "worker": worker.to_dict(),
-                "run_id": self.run_id,
-                "role": self.role,
-                "last_seen_unix": int(time.time()),
-            },
-        )
+    def advertise_worker(
+        self,
+        *,
+        miner: MinerIdentity,
+        worker: WorkerIdentity,
+        runtime: dict | None = None,
+    ) -> None:
+        payload: dict = {
+            "miner": miner.to_dict(),
+            "worker": worker.to_dict(),
+            "run_id": self.run_id,
+            "role": self.role,
+            "last_seen_unix": int(time.time()),
+        }
+        if runtime:
+            payload["runtime"] = dict(runtime)
+        self.bucket.put_json(self.bucket.uri_for_key(self._heartbeat_key(worker)), payload)
 
     def discover_workers(self) -> list[DiscoveryRecord]:
         return scan_bucket_discovery_records(
@@ -144,6 +157,7 @@ def discovery_record_from_dict(data: dict, *, netuid: int, role: str = "train") 
         run_id=data.get("run_id", ""),
         last_seen_unix=int(data.get("last_seen_unix") or 0),
         role=data.get("role") or role,
+        runtime=dict(data.get("runtime") or {}),
     )
 
 
